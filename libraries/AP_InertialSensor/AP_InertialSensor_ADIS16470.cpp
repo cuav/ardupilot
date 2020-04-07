@@ -35,7 +35,7 @@ static constexpr uint8_t DEC_RATE	= 0x64;
 static constexpr uint8_t GLOB_CMD	= 0x68;
 static constexpr uint8_t PROD_ID	= 0x72;
 
-static constexpr uint16_t PROD_ID_ADIS16477 = 0x405D;	// ADIS16470 Identification, device number
+static constexpr uint16_t PROD_ID_ADIS16470 = 0x4056;	// ADIS16470 Identification, device number
 
 extern const AP_HAL::HAL& hal;
 
@@ -89,8 +89,8 @@ bool AP_InertialSensor_ADIS16470::init()
     uint8_t tries;
 
     for(tries = 0; tries < 5; tries++) {
-        product_id = read_reg16(0x72);
-        if(product_id == 0x4056) {
+        product_id = read_reg16(PROD_ID);
+        if(product_id == PROD_ID_ADIS16470) {
             break;
         }
     }
