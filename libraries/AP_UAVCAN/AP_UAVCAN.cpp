@@ -45,6 +45,7 @@
 #include <uavcan/protocol/debug/LogMessage.hpp>
 
 #include <AP_Arming/AP_Arming.h>
+#include <AP_Atmos/AP_Atmos_UAVCAN.h>
 #include <AP_Baro/AP_Baro_UAVCAN.h>
 #include <AP_RangeFinder/AP_RangeFinder_UAVCAN.h>
 #include <AP_GPS/AP_GPS_UAVCAN.h>
@@ -262,6 +263,7 @@ void AP_UAVCAN::init(uint8_t driver_index, bool enable_filters)
     // Roundup all subscribers from supported drivers
     AP_UAVCAN_DNA_Server::subscribe_msgs(this);
     AP_GPS_UAVCAN::subscribe_msgs(this);
+    AP_Atmos_UAVCAN::subscribe_msgs(this);
     AP_Compass_UAVCAN::subscribe_msgs(this);
     AP_Baro_UAVCAN::subscribe_msgs(this);
     AP_BattMonitor_UAVCAN::subscribe_msgs(this);

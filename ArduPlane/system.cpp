@@ -85,6 +85,9 @@ void Plane::init_ardupilot()
     AP::compass().set_log_bit(MASK_LOG_COMPASS);
     AP::compass().init();
 
+    // initialise Atmos sensor
+    atmosphere.init();
+
 #if OPTFLOW == ENABLED
     // make optflow available to libraries
     if (optflow.enabled()) {

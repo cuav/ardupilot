@@ -820,6 +820,7 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_BATTERY_STATUS,        MSG_BATTERY_STATUS},
         { MAVLINK_MSG_ID_AOA_SSA,               MSG_AOA_SSA},
         { MAVLINK_MSG_ID_DEEPSTALL,             MSG_LANDING},
+        { MAVLINK_MSG_ID_SHT31_OUTPUT_STATUS,   MSG_SHT31_STATUS},
         { MAVLINK_MSG_ID_EXTENDED_SYS_STATE,    MSG_EXTENDED_SYS_STATE},
         { MAVLINK_MSG_ID_AUTOPILOT_VERSION,     MSG_AUTOPILOT_VERSION},
         { MAVLINK_MSG_ID_EFI_STATUS,            MSG_EFI_STATUS},
@@ -2661,6 +2662,24 @@ void GCS_MAVLINK::send_vfr_hud()
         abs(vfr_hud_throttle()),
         vfr_hud_alt(),
         vfr_hud_climbrate());
+}
+
+float GCS_MAVLINK::sht31_temp() const
+{
+    return 0x11;
+}
+
+float GCS_MAVLINK::sht31_humi() const
+{
+    return 0x22;
+}
+
+void GCS_MAVLINK::send_sht31()
+{
+    mavlink_msg_sht31_output_status_send(
+            chan,
+            sht31_temp(),
+            sht31_humi()                );
 }
 
 /*
@@ -4812,6 +4831,11 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
     case MSG_SYS_STATUS:
         CHECK_PAYLOAD_SIZE(SYS_STATUS);
         send_sys_status();
+        break;
+
+     case MSG_SHT31_STATUS:
+        CHECK_PAYLOAD_SIZE(SHT31_OUTPUT_STATUS);
+        send_sht31();
         break;
 
     case MSG_AHRS2:
