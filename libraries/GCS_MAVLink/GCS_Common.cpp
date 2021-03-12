@@ -820,6 +820,7 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_FENCE_STATUS,          MSG_FENCE_STATUS},
         { MAVLINK_MSG_ID_AHRS,                  MSG_AHRS},
         { MAVLINK_MSG_ID_SIMSTATE,              MSG_SIMSTATE},
+        { MAVLINK_MSG_ID_SHT31_OUTPUT_STATUS,   MSG_SHT31_STATUS},
         { MAVLINK_MSG_ID_SIM_STATE,             MSG_SIM_STATE},
         { MAVLINK_MSG_ID_AHRS2,                 MSG_AHRS2},
         { MAVLINK_MSG_ID_HWSTATUS,              MSG_HWSTATUS},
@@ -2657,6 +2658,25 @@ float GCS_MAVLINK::vfr_hud_airspeed() const
     // different sort of speed estimate in the relevant field for
     // comparison's sake.
     return AP::gps().ground_speed();
+}
+
+
+float GCS_MAVLINK::sht31_temp() const
+{
+    return 0;  
+}
+
+float GCS_MAVLINK::sht31_humi() const
+{
+    return 0;
+}
+
+void GCS_MAVLINK::send_sht31()
+{
+    mavlink_msg_sht31_output_status_send(
+            chan,
+            sht31_temp(),
+            sht31_humi()                );
 }
 
 float GCS_MAVLINK::vfr_hud_climbrate() const
@@ -4814,6 +4834,10 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
         send_raw_imu();
         break;
 
+    case MSG_SHT31_STATUS:
+        CHECK_PAYLOAD_SIZE(SHT31_OUTPUT_STATUS);
+        send_sht31();
+        break;
     case MSG_SCALED_IMU:
         CHECK_PAYLOAD_SIZE(SCALED_IMU);
         send_scaled_imu(0, mavlink_msg_scaled_imu_send);

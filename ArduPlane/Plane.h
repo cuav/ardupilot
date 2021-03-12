@@ -42,6 +42,7 @@
 #include <Filter/Filter.h>                     // Filter library
 #include <AP_Camera/AP_Camera.h>          // Photo or video camera
 #include <AP_Airspeed/AP_Airspeed.h>
+#include <AP_Atmos/AP_Atmos.h>
 #include <AP_Terrain/AP_Terrain.h>
 #include <AP_RPM/AP_RPM.h>
 #include <AP_Stats/AP_Stats.h>     // statistics library
@@ -402,6 +403,9 @@ private:
 
     // Airspeed Sensors
     AP_Airspeed airspeed;
+
+    // Atmos Sensors
+    AP_Atmos atmosphere;
 
     // ACRO controller state
     struct {
