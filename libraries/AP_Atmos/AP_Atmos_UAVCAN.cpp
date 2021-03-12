@@ -144,7 +144,7 @@ bool AP_Atmos_UAVCAN::get_humidity(float &humidity)
     }
 
     humidity = _humidity;
-    // printf("AP_Atmos_UAVCAN::get_humidity = %f\n",humidity);
+    printf("AP_Atmos_UAVCAN::get_humidity = %f\n",humidity);
     return true;
 
  }
@@ -160,6 +160,6 @@ bool AP_Atmos_UAVCAN::get_temperature(float &temperature)
     }
 
     temperature = _temperature;
-    // printf("AP_Atmos_UAVCAN::get_temperature = %f\n",temperature);
+    printf("AP_Atmos_UAVCAN::get_temperature = %f\n",temperature);
     return true;
 }
