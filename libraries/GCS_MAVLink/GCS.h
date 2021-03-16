@@ -252,6 +252,7 @@ public:
     void send_extended_sys_state() const;
     void send_local_position() const;
     void send_vfr_hud();
+    void send_sht31();
     void send_vibration() const;
     void send_mount_status() const;
     void send_named_float(const char *name, float value) const;
@@ -510,6 +511,9 @@ protected:
     bool try_send_mission_message(enum ap_message id);
     void send_hwstatus();
     void handle_data_packet(const mavlink_message_t &msg);
+
+    virtual float sht31_temp() const;
+    virtual float sht31_humi() const;
 
     // these two methods are called after current_loc is updated:
     virtual int32_t global_position_int_alt() const;

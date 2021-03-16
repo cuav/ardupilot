@@ -52,6 +52,7 @@
 #include <AP_Compass/AP_Compass_UAVCAN.h>
 #include <AP_Airspeed/AP_Airspeed_UAVCAN.h>
 #include <SRV_Channel/SRV_Channel.h>
+#include <AP_Atmos/AP_Atmos_UAVCAN.h>
 #include <AP_OpticalFlow/AP_OpticalFlow_HereFlow.h>
 #include <AP_ADSB/AP_ADSB.h>
 #include "AP_UAVCAN_DNA_Server.h"
@@ -268,6 +269,7 @@ void AP_UAVCAN::init(uint8_t driver_index, bool enable_filters)
     AP_Airspeed_UAVCAN::subscribe_msgs(this);
     AP_OpticalFlow_HereFlow::subscribe_msgs(this);
     AP_RangeFinder_UAVCAN::subscribe_msgs(this);
+    AP_Atmos_UAVCAN::subscribe_msgs(this);
 
     act_out_array[driver_index] = new uavcan::Publisher<uavcan::equipment::actuator::ArrayCommand>(*_node);
     act_out_array[driver_index]->setTxTimeout(uavcan::MonotonicDuration::fromMSec(2));
