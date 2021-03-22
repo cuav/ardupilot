@@ -820,6 +820,7 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_PARAM_VALUE,           MSG_NEXT_PARAM},
         { MAVLINK_MSG_ID_FENCE_STATUS,          MSG_FENCE_STATUS},
         { MAVLINK_MSG_ID_AHRS,                  MSG_AHRS},
+        { MAVLINK_MSG_ID_SHT31_OUTPUT_STATUS,   MSG_SHT31_STATUS},
         { MAVLINK_MSG_ID_SIMSTATE,              MSG_SIMSTATE},
         { MAVLINK_MSG_ID_SIM_STATE,             MSG_SIM_STATE},
         { MAVLINK_MSG_ID_AHRS2,                 MSG_AHRS2},
@@ -2689,6 +2690,25 @@ void GCS_MAVLINK::send_vfr_hud()
         abs(vfr_hud_throttle()),
         vfr_hud_alt(),
         vfr_hud_climbrate());
+}
+
+
+float GCS_MAVLINK::sht31_temp() const
+{
+    return 0;  
+}
+
+float GCS_MAVLINK::sht31_humi() const
+{
+    return 0;
+}
+
+void GCS_MAVLINK::send_sht31()
+{
+    mavlink_msg_sht31_output_status_send(
+            chan,
+            sht31_temp(),
+            sht31_humi()                );
 }
 
 /*
@@ -4813,6 +4833,11 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
         send_opticalflow();
         break;
 
+    case MSG_SHT31_STATUS:
+        CHECK_PAYLOAD_SIZE(SHT31_OUTPUT_STATUS);
+        send_sht31();
+        break;
+        
     case MSG_POSITION_TARGET_GLOBAL_INT:
         CHECK_PAYLOAD_SIZE(POSITION_TARGET_GLOBAL_INT);
         send_position_target_global_int();
