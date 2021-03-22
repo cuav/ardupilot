@@ -118,7 +118,7 @@ HAL_ChibiOS::HAL_ChibiOS() :
         &spiDeviceManager,
         &analogIn,
         &storageDriver,
-        &uartADriver,
+        &uartGDriver,
         &gpioDriver,
         &rcinDriver,
         &rcoutDriver,
@@ -178,14 +178,20 @@ static void main_loop()
     peripheral_power_enable();
 
     hal.uartA->begin(115200);
+    hal.uartG->begin(115200);
+    hal.console->printf("\nCUAV:[3][InitStart,0]\n");
 
 #ifdef HAL_SPI_CHECK_CLOCK_FREQ
     // optional test of SPI clock frequencies
     ChibiOS::SPIDevice::test_clock_freq();
 #endif
 
-    hal.uartB->begin(38400);
-    hal.uartC->begin(57600);
+    hal.uartB->begin(115200);
+    hal.uartC->begin(115200);	    
+    hal.uartD->begin(115200);
+    hal.uartE->begin(115200);
+
+
     hal.analogin->init();
     hal.scheduler->init();
 
@@ -231,7 +237,7 @@ static void main_loop()
       switch to high priority for main loop
      */
     chThdSetPriority(APM_MAIN_PRIORITY);
-
+    hal.console->printf("\nCUAV:[3][InitEnd,0]\n");
     while (true) {
         g_callbacks->loop();
 

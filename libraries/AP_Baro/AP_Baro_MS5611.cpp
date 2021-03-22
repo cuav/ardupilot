@@ -118,8 +118,8 @@ bool AP_Baro_MS56XX::_init()
         return false;
     }
 
-    printf("%s found on bus %u address 0x%02x\n", name, _dev->bus_num(), _dev->get_bus_address());
-
+    //printf("%s found on bus %u address 0x%02x\n", name, _dev->bus_num(), _dev->get_bus_address());
+    hal.console->printf("CUAV:[0][%s,%d]\n", name, _dev->bus_num());
     // Save factory calibration coefficients
     _cal_reg.c1 = prom[1];
     _cal_reg.c2 = prom[2];

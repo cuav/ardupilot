@@ -207,6 +207,9 @@ bool AP_Compass_BMM150::init()
     if (!ret) {
         goto bus_error;
     }
+    
+    hal.console->printf("CUAV:[0][%s,%d]\n", name, _dev->bus_num());
+    goto bus_error;
 
     _dev->get_semaphore()->give();
 

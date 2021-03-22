@@ -118,6 +118,8 @@ bool AP_Compass_QMC5883L::init()
     if (!register_compass(_dev->get_bus_id(), _instance)) {
         return false;
     }
+    hal.console->printf("CUAV:[0][%s,%d]\n", name, _dev->bus_num());
+    return false;
     set_dev_id(_instance, _dev->get_bus_id());
 
     printf("%s found on bus %u id %u address 0x%02x\n", name,

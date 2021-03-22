@@ -267,10 +267,10 @@ void AP_InertialSensor_Invensense::start()
     // readings to fit them into an int16_t:
     _set_raw_sample_accel_multiplier(_accel_instance, multiplier_accel);
 
-    if (_fast_sampling) {
-        hal.console->printf("MPU[%u]: enabled fast sampling rate %uHz/%uHz\n",
-                            _accel_instance, _backend_rate_hz*_fifo_downsample_rate, _backend_rate_hz);
-    }
+    // if (_fast_sampling) {
+    //     hal.console->printf("MPU[%u]: enabled fast sampling rate %uHz/%uHz\n",
+    //                         _accel_instance, _backend_rate_hz*_fifo_downsample_rate, _backend_rate_hz);
+    // }
     
     // set sample rate to 1000Hz and apply a software filter
     // In this configuration, the gyro sample rate is 8kHz
@@ -858,7 +858,23 @@ bool AP_InertialSensor_Invensense::_hardware_init(void)
         _register_write(MPUREG_ICM_UNDOC1, MPUREG_ICM_UNDOC1_VALUE, true);
     }
     _dev->get_semaphore()->give();
-    
+
+    if(_mpu_type == Invensense_MPU6000) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "MPU6000", _dev->bus_num());
+    } else if(_mpu_type == Invensense_MPU6500) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "MPU6500", _dev->bus_num());
+    } else if(_mpu_type == Invensense_MPU9250) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "MPU9250", _dev->bus_num());
+    } else if(_mpu_type == Invensense_ICM20608) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "ICM20608", _dev->bus_num());
+    } else if(_mpu_type == Invensense_ICM20602) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "ICM20602", _dev->bus_num());
+    } else if(_mpu_type == Invensense_ICM20789) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "ICM20789", _dev->bus_num());
+    } else if(_mpu_type == Invensense_ICM20689) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "ICM20689", _dev->bus_num());
+    }
+
     return true;
 }
 

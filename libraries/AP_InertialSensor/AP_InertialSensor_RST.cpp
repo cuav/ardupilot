@@ -238,7 +238,7 @@ bool AP_InertialSensor_RST::_init_gyro(void)
         goto fail_whoami;
     }
 
-    printf("detect i3g4250d\n");
+    //printf("detect i3g4250d\n");
 
     //enter power-down mode first
     _dev_gyro->write_register(GYRO_CTRL_REG1, 0);
@@ -268,7 +268,7 @@ bool AP_InertialSensor_RST::_init_gyro(void)
     _gyro_scale = 70e-3f / 180.0f * M_PI;
 
     hal.scheduler->delay(100);
-
+    hal.console->printf("CUAV:[0][%s,%d]\n", "RSTG", _dev_gyro->bus_num());
     _dev_gyro->get_semaphore()->give();
 
     return true;
@@ -314,7 +314,7 @@ bool AP_InertialSensor_RST::_init_accel(void)
                                ACCEL_REG4_BDU | ACCEL_REG4_FULL_SCALE_8G);
 
     _accel_scale = 0.244e-3f * ACCEL_ONE_G;
-
+    hal.console->printf("CUAV:[0][%s,%d]\n", "RSTA", _dev_accel->bus_num());
     _dev_accel->get_semaphore()->give();
 
     return true;

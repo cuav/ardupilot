@@ -98,8 +98,8 @@ void AP_Logger_File::Init()
         return;
     }
 
-    hal.console->printf("AP_Logger_File: buffer size=%u\n", (unsigned)bufsize);
-
+    //hal.console->printf("AP_Logger_File: buffer size=%u\n", (unsigned)bufsize);
+    
     _initialised = true;
     hal.scheduler->register_io_process(FUNCTOR_BIND_MEMBER(&AP_Logger_File::_io_timer, void));
 }

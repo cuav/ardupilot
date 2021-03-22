@@ -1114,7 +1114,7 @@ void Copter::load_parameters(void)
         hal.console->printf("done.\n");
     }
 
-    uint32_t before = micros();
+    //uint32_t before = micros();
     // Load all auto-loaded EEPROM variables
     AP_Param::load_all();
     AP_Param::convert_old_parameters(&conversion_table[0], ARRAY_SIZE(conversion_table));
@@ -1125,7 +1125,7 @@ void Copter::load_parameters(void)
     // convert fs_options parameters
     convert_fs_options_params();
 
-    hal.console->printf("load_all took %uus\n", (unsigned)(micros() - before));
+    //hal.console->printf("load_all took %uus\n", (unsigned)(micros() - before));
 
     // setup AP_Param frame type flags
     AP_Param::set_frame_type_flags(AP_PARAM_FRAME_COPTER);

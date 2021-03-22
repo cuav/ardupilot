@@ -114,6 +114,7 @@ void AP_InertialSensor_ADIS1647x::start()
 bool AP_InertialSensor_ADIS1647x::check_product_id(void)
 {
     uint16_t prod_id = read_reg16(REG_PROD_ID);
+    adis_id = prod_id;
     switch (prod_id) {
     case PROD_ID_16470:
         // can do up to 40G
@@ -175,6 +176,12 @@ bool AP_InertialSensor_ADIS1647x::init()
 
     // we need to use low speed for burst transfers
     dev->set_speed(AP_HAL::Device::SPEED_LOW);
+    if(adis_id == PROD_ID_16470) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "ADIS16470", dev->bus_num());
+    } 
+    else if(adis_id == PROD_ID_16477) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "ADIS16477", dev->bus_num());
+    }
 
     return true;
 }

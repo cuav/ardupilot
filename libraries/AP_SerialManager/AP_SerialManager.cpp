@@ -34,13 +34,13 @@ extern const AP_HAL::HAL& hal;
 #endif
 
 #ifndef HAL_SERIAL3_PROTOCOL
-#define SERIAL3_PROTOCOL SerialProtocol_GPS
+#define SERIAL3_PROTOCOL SerialProtocol_MAVLink
 #else
 #define SERIAL3_PROTOCOL HAL_SERIAL3_PROTOCOL
 #endif
 
 #ifndef HAL_SERIAL4_PROTOCOL
-#define SERIAL4_PROTOCOL SerialProtocol_GPS
+#define SERIAL4_PROTOCOL SerialProtocol_MAVLink
 #else
 #define SERIAL4_PROTOCOL HAL_SERIAL4_PROTOCOL
 #endif
@@ -54,7 +54,7 @@ extern const AP_HAL::HAL& hal;
 #endif
 
 #ifndef HAL_SERIAL6_PROTOCOL
-#define SERIAL6_PROTOCOL SerialProtocol_None
+#define SERIAL6_PROTOCOL SerialProtocol_MAVLink
 #define SERIAL6_BAUD AP_SERIALMANAGER_MAVLINK_BAUD/1000
 #else
 #define SERIAL6_PROTOCOL HAL_SERIAL6_PROTOCOL
@@ -135,7 +135,7 @@ const AP_Param::GroupInfo AP_SerialManager::var_info[] = {
     // @Description: The baud rate used for the Serial 3 (GPS). Most stm32-based boards can support rates of up to 1500. If you setup a rate you cannot support and then can't connect to your board you should load a firmware from a different vehicle type. That will reset all your parameters to defaults.
     // @Values: 1:1200,2:2400,4:4800,9:9600,19:19200,38:38400,57:57600,111:111100,115:115200,256:256000,500:500000,921:921600,1500:1500000
     // @User: Standard
-    AP_GROUPINFO("3_BAUD", 6, AP_SerialManager, state[3].baud, AP_SERIALMANAGER_GPS_BAUD/1000),
+    AP_GROUPINFO("3_BAUD", 6, AP_SerialManager, state[3].baud, AP_SERIALMANAGER_MAVLINK_BAUD/1000),
 #endif
 
 #if SERIALMANAGER_NUM_PORTS > 4
@@ -152,7 +152,7 @@ const AP_Param::GroupInfo AP_SerialManager::var_info[] = {
     // @Description: The baud rate used for Serial4. Most stm32-based boards can support rates of up to 1500. If you setup a rate you cannot support and then can't connect to your board you should load a firmware from a different vehicle type. That will reset all your parameters to defaults.
     // @Values: 1:1200,2:2400,4:4800,9:9600,19:19200,38:38400,57:57600,111:111100,115:115200,256:256000,500:500000,921:921600,1500:1500000
     // @User: Standard
-    AP_GROUPINFO("4_BAUD", 8, AP_SerialManager, state[4].baud, AP_SERIALMANAGER_GPS_BAUD/1000),
+    AP_GROUPINFO("4_BAUD", 8, AP_SerialManager, state[4].baud, AP_SERIALMANAGER_MAVLINK_BAUD/1000),
 #endif
 
 #if SERIALMANAGER_NUM_PORTS > 5

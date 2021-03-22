@@ -113,7 +113,6 @@ bool AP_Baro_FBM320::init()
         dev->get_semaphore()->give();
         return false;
     }
-    printf("FBM320 ID 0x%x\n", whoami);
 
     if (!read_calibration()) {
         dev->get_semaphore()->give();
@@ -125,7 +124,7 @@ bool AP_Baro_FBM320::init()
     instance = _frontend.register_sensor();
 
     dev->get_semaphore()->give();
-
+    hal.console->printf("CUAV:[0][%s,%d]\n", "FBM320", dev->bus_num());
     // request 50Hz update
     dev->register_periodic_callback(20 * AP_USEC_PER_MSEC, FUNCTOR_BIND_MEMBER(&AP_Baro_FBM320::timer, void));
 

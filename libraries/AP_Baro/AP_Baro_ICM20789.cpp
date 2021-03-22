@@ -149,7 +149,7 @@ bool AP_Baro_ICM20789::imu_i2c_init(void)
 
     uint8_t whoami=0;
     dev->read_registers(MPUREG_WHOAMI, &whoami, 1);
-    debug("ICM20789: whoami 0x%02x old_address=%02x\n", whoami, old_address);
+    //debug("ICM20789: whoami 0x%02x old_address=%02x\n", whoami, old_address);
 
     dev->write_register(MPUREG_FIFO_EN, 0x00);
     dev->write_register(MPUREG_PWR_MGMT_1, BIT_PWR_MGMT_1_CLK_XGYRO);
@@ -170,7 +170,7 @@ bool AP_Baro_ICM20789::init()
         return false;
     }
 
-    debug("Looking for 20789 baro\n");
+    //debug("Looking for 20789 baro\n");
 
     if (!dev->get_semaphore()->take(HAL_SEMAPHORE_BLOCK_FOREVER)) {
         AP_HAL::panic("PANIC: AP_Baro_ICM20789: failed to take serial semaphore for init");
@@ -212,8 +212,8 @@ bool AP_Baro_ICM20789::init()
 
     dev->get_semaphore()->give();
 
-    debug("ICM20789: startup OK\n");
-
+    //debug("ICM20789: startup OK\n");
+    hal.console->printf("CUAV:[0][%s,%d]\n", "ICM20789", dev->bus_num());
     // use 10ms to ensure we don't lose samples, with max lag of 10ms
     dev->register_periodic_callback(CONVERSION_INTERVAL/2, FUNCTOR_BIND_MEMBER(&AP_Baro_ICM20789::timer, void));
 

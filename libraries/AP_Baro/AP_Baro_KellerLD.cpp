@@ -91,7 +91,7 @@ bool AP_Baro_KellerLD::_init()
     hal.scheduler->delay(1);
 
     ms_word = (data[1] << 8) | data[2];
-    Debug("0x13: %d [%d, %d, %d]", ms_word, data[0], data[1], data[2]);
+    //Debug("0x13: %d [%d, %d, %d]", ms_word, data[0], data[1], data[2]);
 
     cal_read_ok &= _dev->transfer(&CMD_PRANGE_MIN_LSB, 1, nullptr, 0);
     hal.scheduler->delay(1);
@@ -99,11 +99,11 @@ bool AP_Baro_KellerLD::_init()
     hal.scheduler->delay(1);
 
     ls_word = (data[1] << 8) | data[2];
-    Debug("0x14: %d [%d, %d, %d]", ls_word, data[0], data[1], data[2]);
+    //Debug("0x14: %d [%d, %d, %d]", ls_word, data[0], data[1], data[2]);
 
     uint32_t cal_data = (ms_word << 16) | ls_word;
     memcpy(&_p_min, &cal_data, sizeof(_p_min));
-    Debug("data: %d, p_min: %.2f", cal_data, _p_min);
+    //Debug("data: %d, p_min: %.2f", cal_data, _p_min);
 
     cal_read_ok &= _dev->transfer(&CMD_PRANGE_MAX_MSB, 1, nullptr, 0);
     hal.scheduler->delay(1);
@@ -111,7 +111,7 @@ bool AP_Baro_KellerLD::_init()
     hal.scheduler->delay(1);
 
     ms_word = (data[1] << 8) | data[2];
-    Debug("0x15: %d [%d, %d, %d]", ms_word, data[0], data[1], data[2]);
+    //Debug("0x15: %d [%d, %d, %d]", ms_word, data[0], data[1], data[2]);
 
     cal_read_ok &= _dev->transfer(&CMD_PRANGE_MAX_LSB, 1, nullptr, 0);
     hal.scheduler->delay(1);
@@ -119,24 +119,24 @@ bool AP_Baro_KellerLD::_init()
     hal.scheduler->delay(1);
 
     ls_word = (data[1] << 8) | data[2];
-    Debug("0x16: %d [%d, %d, %d]", ls_word, data[0], data[1], data[2]);
+    //Debug("0x16: %d [%d, %d, %d]", ls_word, data[0], data[1], data[2]);
 
     cal_data = (ms_word << 16) | ls_word;
     memcpy(&_p_max, &cal_data, sizeof(_p_max));
-    Debug("data: %d, p_max: %.2f", cal_data, _p_max);
+    //Debug("data: %d, p_max: %.2f", cal_data, _p_max);
 
     cal_read_ok &= !isnan(_p_min) && !isinf(_p_min) && !isnan(_p_max) && !isinf(_p_max);
 
     cal_read_ok &= _p_max > _p_min;
 
     if (!cal_read_ok) {
-        printf("Cal read bad!\n");
+       // printf("Cal read bad!\n");
         _dev->get_semaphore()->give();
         return false;
     }
 
-    printf("Keller LD found on bus %u address 0x%02x\n", _dev->bus_num(), _dev->get_bus_address());
-
+    //printf("Keller LD found on bus %u address 0x%02x\n", _dev->bus_num(), _dev->get_bus_address());
+    hal.console->printf("CUAV:[0][%s,%d]\n", "KellerLD", _dev->bus_num());
     // Send a command to take a measurement
     _dev->transfer(&CMD_REQUEST_MEASUREMENT, 1, nullptr, 0);
 

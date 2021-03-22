@@ -94,7 +94,8 @@ bool AP_Compass_MMC3416::init()
     if (!register_compass(dev->get_bus_id(), compass_instance)) {
         return false;
     }
-    
+    hal.console->printf("CUAV:[0][%s,%d]\n", name, dev->bus_num());
+    return false;
     set_dev_id(compass_instance, dev->get_bus_id());
 
     printf("Found a MMC3416 on 0x%x as compass %u\n", dev->get_bus_id(), compass_instance);

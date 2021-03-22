@@ -83,7 +83,7 @@ public:
 
     // return 24 bit bus identifier
     virtual uint32_t get_bus_id(void) const = 0;
-
+    virtual uint8_t bus_num(void) const = 0;
     virtual void set_retries(uint8_t retries) {}
 };
 
@@ -109,7 +109,9 @@ public:
     uint32_t get_bus_id(void) const override {
         return _dev->get_bus_id();
     }
-
+    uint8_t bus_num(void) const override {
+        return _dev->bus_num();
+    }
     void set_retries(uint8_t retries) override {
         return _dev->set_retries(retries);
     }
@@ -141,6 +143,8 @@ public:
 
     // return 24 bit bus identifier
     uint32_t get_bus_id(void) const override;
+
+    uint8_t bus_num(void) const override;
     
 private:
     AuxiliaryBus *_bus;

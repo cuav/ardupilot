@@ -270,6 +270,9 @@ bool AP_Compass_LSM303D::init(enum Rotation rotation)
     if (!register_compass(_dev->get_bus_id(), _compass_instance)) {
         return false;
     }
+    hal.console->printf("CUAV:[0][%s,%d]\n", name, _dev->bus_num());
+    return false;
+
     set_dev_id(_compass_instance, _dev->get_bus_id());
 
     set_rotation(_compass_instance, rotation);

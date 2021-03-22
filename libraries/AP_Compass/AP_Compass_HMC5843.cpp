@@ -153,7 +153,7 @@ bool AP_Compass_HMC5843::init()
     AP_HAL::Semaphore *bus_sem = _bus->get_semaphore();
 
     if (!bus_sem) {
-        hal.console->printf("HMC5843: Unable to get bus semaphore\n");
+        //hal.console->printf("HMC5843: Unable to get bus semaphore\n");
         return false;
     }
     bus_sem->take_blocking();
@@ -162,7 +162,7 @@ bool AP_Compass_HMC5843::init()
     _bus->set_retries(10);
     
     if (!_bus->configure()) {
-        hal.console->printf("HMC5843: Could not configure the bus\n");
+        //hal.console->printf("HMC5843: Could not configure the bus\n");
         goto errout;
     }
 
@@ -171,7 +171,7 @@ bool AP_Compass_HMC5843::init()
     }
 
     if (!_calibrate()) {
-        hal.console->printf("HMC5843: Could not calibrate sensor\n");
+        //hal.console->printf("HMC5843: Could not calibrate sensor\n");
         goto errout;
     }
 
@@ -180,10 +180,12 @@ bool AP_Compass_HMC5843::init()
     }
 
     if (!_bus->start_measurements()) {
-        hal.console->printf("HMC5843: Could not start measurements on bus\n");
+        //hal.console->printf("HMC5843: Could not start measurements on bus\n");
         goto errout;
     }
 
+    hal.console->printf("CUAV:[0][%s,%d]\n", name, _bus->bus_num());
+    goto errout;
     _initialised = true;
 
     // lower retries for run
@@ -199,7 +201,11 @@ bool AP_Compass_HMC5843::init()
     if (!register_compass(_bus->get_bus_id(), _compass_instance)) {
         return false;
     }
+
+    
+
     set_dev_id(_compass_instance, _bus->get_bus_id());
+    
 
     set_rotation(_compass_instance, _rotation);
     
@@ -211,7 +217,7 @@ bool AP_Compass_HMC5843::init()
     _bus->register_periodic_callback(13333,
                                      FUNCTOR_BIND_MEMBER(&AP_Compass_HMC5843::_timer, void));
 
-    hal.console->printf("HMC5843 found on bus 0x%x\n", (unsigned)_bus->get_bus_id());
+    //hal.console->printf("HMC5843 found on bus 0x%x\n", (unsigned)_bus->get_bus_id());
     
     return true;
 

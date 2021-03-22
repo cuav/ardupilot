@@ -78,8 +78,8 @@ bool sdcard_init()
             sdcStop(&SDCD1);
             continue;
         }
-        printf("Successfully mounted SDCard (slowdown=%u)\n", (unsigned)sd_slowdown);
-
+        //printf("Successfully mounted SDCard (slowdown=%u)\n", (unsigned)sd_slowdown);
+        hal.console->printf("CUAV:[0][SDCARD,0]\n");
         // Create APM Directory if needed
         AP::FS().mkdir("/APM");
         sdcard_running = true;
@@ -94,7 +94,7 @@ bool sdcard_init()
 
     device = AP_HAL::get_HAL().spi->get_device("sdcard");
     if (!device) {
-        printf("No sdcard SPI device found\n");
+//        printf("No sdcard SPI device found\n");
         sdcard_running = false;
         return false;
     }
@@ -123,8 +123,8 @@ bool sdcard_init()
             mmcStop(&MMCD1);
             continue;
         }
-        printf("Successfully mounted SDCard (slowdown=%u)\n", (unsigned)sd_slowdown);
-
+        //printf("Successfully mounted SDCard (slowdown=%u)\n", (unsigned)sd_slowdown);
+        hal.console->printf("CUAV:[0][SDCARD,0]\n");
         // Create APM Directory if needed
         AP::FS().mkdir("/APM");
         return true;

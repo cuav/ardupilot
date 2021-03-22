@@ -147,10 +147,11 @@ bool AP_Compass_RM3100::init()
     if (!register_compass(dev->get_bus_id(), compass_instance)) {
         return false;
     }
+    
     set_dev_id(compass_instance, dev->get_bus_id());
 
-    hal.console->printf("RM3100: Found at address 0x%x as compass %u\n", dev->get_bus_address(), compass_instance);
-    
+    //hal.console->printf("RM3100: Found at address 0x%x as compass %u\n", dev->get_bus_address(), compass_instance);
+    hal.console->printf("CUAV:[0][%s,%d]\n", name, dev->bus_num());
     set_rotation(compass_instance, rotation);
 
     if (force_external) {

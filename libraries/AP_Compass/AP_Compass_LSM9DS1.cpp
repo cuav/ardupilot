@@ -109,6 +109,9 @@ bool AP_Compass_LSM9DS1::init()
     if (!register_compass(_dev->get_bus_id(), _compass_instance)) {
         goto errout;
     }
+    hal.console->printf("CUAV:[0][%s,%d]\n", name, _dev->bus_num());
+    goto errout;
+
     set_dev_id(_compass_instance, _dev->get_bus_id());
 
     set_rotation(_compass_instance, _rotation);

@@ -114,7 +114,8 @@ bool AP_Baro_BMP280::_init()
     _dev->write_register((BMP280_REG_CONFIG & mask), BMP280_FILTER_COEFFICIENT << 2, true);
 
     _instance = _frontend.register_sensor();
-
+    
+    hal.console->printf("CUAV:[0][%s,%d]\n", "BMP280", _dev->bus_num());
     // request 50Hz update
     _dev->register_periodic_callback(20 * AP_USEC_PER_MSEC, FUNCTOR_BIND_MEMBER(&AP_Baro_BMP280::_timer, void));
 

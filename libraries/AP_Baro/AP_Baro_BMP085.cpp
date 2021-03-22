@@ -136,7 +136,7 @@ bool AP_Baro_BMP085::_init()
     _state = 0;
 
     _instance = _frontend.register_sensor();
-
+    hal.console->printf("CUAV:[0][%s,%d]\n", "BMP085", _dev->bus_num());
     _dev->register_periodic_callback(20000, FUNCTOR_BIND_MEMBER(&AP_Baro_BMP085::_timer, void));
     return true;
 }

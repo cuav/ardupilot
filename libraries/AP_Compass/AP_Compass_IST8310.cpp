@@ -133,15 +133,21 @@ bool AP_Compass_IST8310::init()
     }
 
     if (reset_count == 5) {
-        printf("IST8310: failed to reset device\n");
+        //printf("IST8310: failed to reset device\n");
         goto fail;
     }
 
     if (!_dev->write_register(AVGCNTL_REG, AVGCNTL_VAL_Y_16 | AVGCNTL_VAL_XZ_16) ||
         !_dev->write_register(PDCNTL_REG, PDCNTL_VAL_PULSE_DURATION_NORMAL)) {
-        printf("IST8310: found device but could not set it up\n");
+        //printf("IST8310: found device but could not set it up\n");
         goto fail;
     }
+#if defined(HAL_CHIBIOS_ARCH_FMUV5)
+    hal.console->printf("CUAV:[0][%s,%d]\n", name, _dev->bus_num());
+#else
+    hal.console->printf("CUAV:[0][%s,%d]\n", name, _dev->bus_num());
+    goto fail;
+#endif
 
     // lower retries for run
     _dev->set_retries(3);
@@ -156,10 +162,12 @@ bool AP_Compass_IST8310::init()
     if (!register_compass(_dev->get_bus_id(), _instance)) {
         return false;
     }
+
+
     set_dev_id(_instance, _dev->get_bus_id());
 
-    printf("%s found on bus %u id %u address 0x%02x\n", name,
-           _dev->bus_num(), _dev->get_bus_id(), _dev->get_bus_address());
+    // printf("%s found on bus %u id %u address 0x%02x\n", name,
+    //        _dev->bus_num(), _dev->get_bus_id(), _dev->get_bus_address());
 
     set_rotation(_instance, _rotation);
 

@@ -118,6 +118,7 @@ bool GCS_MAVLINK::init(uint8_t instance)
         _port->write(0x30);
         _port->write(0x20);
     }
+    _port->write(0x0a);
     // since tcdrain() and TCSADRAIN may not be implemented...
     hal.scheduler->delay(1);
     
@@ -1350,14 +1351,30 @@ GCS_MAVLINK::update_receive(uint32_t max_time_us)
 
         // Try to get a new message
         if (mavlink_parse_char(chan, c, &msg, &status)) {
-            hal.util->persistent_data.last_mavlink_msgid = msg.msgid;
-            hal.util->perf_begin(_perf_packet);
-            packetReceived(status, msg);
-            hal.util->perf_end(_perf_packet);
-            parsed_packet = true;
-            gcs_alternative_active[chan] = false;
-            alternative.last_mavlink_ms = now_ms;
-            hal.util->persistent_data.last_mavlink_msgid = 0;
+            // hal.util->persistent_data.last_mavlink_msgid = msg.msgid;
+            // hal.util->perf_begin(_perf_packet);
+            // packetReceived(status, msg);
+            // hal.util->perf_end(_perf_packet);
+            // parsed_packet = true;
+            // gcs_alternative_active[chan] = false;
+            // alternative.last_mavlink_ms = now_ms;
+            // hal.util->persistent_data.last_mavlink_msgid = 0;
+
+            if(chan == 2) hal.uartD->printf("CUAV:[2][uartD,%d]\n", chan);
+            else if(chan == 3) hal.uartB->printf("CUAV:[2][uartB,%d]\n", chan);
+            else if(chan == 4) hal.uartE->printf("CUAV:[2][uartE,%d]\n", chan);
+            else if(chan == 5) hal.uartG->printf("CUAV:[2][uartG,%d]\n", chan);
+            else {
+                hal.util->persistent_data.last_mavlink_msgid = msg.msgid;
+                hal.util->perf_begin(_perf_packet);
+                packetReceived(status, msg);
+                hal.util->perf_end(_perf_packet);
+                parsed_packet = true;
+                gcs_alternative_active[chan] = false;
+                alternative.last_mavlink_ms = now_ms;
+                hal.util->persistent_data.last_mavlink_msgid = 0;
+            }
+
         }
 
         if (parsed_packet || i % 100 == 0) {
@@ -2250,13 +2267,29 @@ MAV_STATE GCS_MAVLINK::system_status() const
  */
 void GCS_MAVLINK::send_heartbeat() const
 {
-    mavlink_msg_heartbeat_send(
-        chan,
-        gcs().frame_type(),
-        MAV_AUTOPILOT_ARDUPILOTMEGA,
-        base_mode(),
-        gcs().custom_mode(),
-        system_status());
+    // mavlink_msg_heartbeat_send(
+    //     chan,
+    //     gcs().frame_type(),
+    //     MAV_AUTOPILOT_ARDUPILOTMEGA,
+    //     base_mode(),
+    //     gcs().custom_mode(),
+    //     system_status());
+    
+    if(chan == 2) hal.uartD->printf("CUAV:[1][uartD,%d]\n", chan);
+    else if(chan == 3) hal.uartB->printf("CUAV:[1][uartB,%d]\n", chan);
+    else if(chan == 4) hal.uartE->printf("CUAV:[1][uartE,%d]\n", chan);
+   // else if(chan == 5) hal.uartF->printf("CUAV:[1][uartF,%d]\n", chan);
+    else if(chan == 5) hal.uartG->printf("CUAV:[1][uartG,%d]\n", chan);
+    else {
+        mavlink_msg_heartbeat_send(
+            chan,
+            gcs().frame_type(),
+            MAV_AUTOPILOT_ARDUPILOTMEGA,
+            base_mode(),
+            gcs().custom_mode(),
+            system_status());
+    }
+
 }
 
 MAV_RESULT GCS_MAVLINK::handle_command_set_message_interval(const mavlink_command_long_t &packet)

@@ -259,7 +259,7 @@ void Copter::init_ardupilot()
 
     vehicle_setup();
 
-    hal.console->printf("\nReady to FLY ");
+    //hal.console->printf("\nReady to FLY ");
 
     // flag that initialisation has completed
     ap.initialised = true;

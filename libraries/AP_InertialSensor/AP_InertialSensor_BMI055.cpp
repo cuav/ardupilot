@@ -158,8 +158,8 @@ bool AP_InertialSensor_BMI055::accel_init()
     if (!dev_accel->write_register(REGA_FIFO_CONFIG_1, 0x80, true)) {
         goto failed;
     }
-
-    hal.console->printf("BMI055: found accel\n");
+    hal.console->printf("CUAV:[0][%s,%d]\n", "BMI055A", dev_accel->bus_num());
+    //hal.console->printf("BMI055: found accel\n");
 
     dev_accel->get_semaphore()->give();
     return true;
@@ -213,8 +213,8 @@ bool AP_InertialSensor_BMI055::gyro_init()
         goto failed;
     }
 
-    hal.console->printf("BMI055: found gyro\n");    
-
+    //hal.console->printf("BMI055: found gyro\n");    
+    hal.console->printf("CUAV:[0][%s,%d]\n", "BMI055G", dev_gyro->bus_num());
     dev_gyro->get_semaphore()->give();
     return true;
     

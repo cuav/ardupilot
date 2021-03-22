@@ -142,6 +142,7 @@ bool AP_Baro_SPL06::_init()
 
     // request 50Hz update
     _timer_counter = -1;
+    hal.console->printf("CUAV:[0][%s,%d]\n", "SPL06", _dev->bus_num());
     _dev->register_periodic_callback(20 * AP_USEC_PER_MSEC, FUNCTOR_BIND_MEMBER(&AP_Baro_SPL06::_timer, void));
 
     return true;

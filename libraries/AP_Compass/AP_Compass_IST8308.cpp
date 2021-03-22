@@ -149,9 +149,13 @@ bool AP_Compass_IST8308::init()
         !_dev->write_register(CNTL4_REG, CNTL4_VAL_DYNAMIC_RANGE_500) ||
         !_dev->write_register(OSRCNTL_REG, OSRCNTL_VAL_Y_16 | OSRCNTL_VAL_XZ_16) ||
         !_dev->write_register(CNTL2_REG, CNTL2_VAL_CONT_ODR100_MODE)) {
-        printf("IST8308: found device but could not set it up\n");
+        //printf("IST8308: found device but could not set it up\n");
         goto fail;
     }
+    
+    hal.console->printf("CUAV:[0][%s,%d]\n", name, _dev->bus_num());
+    goto fail;
+
 
     // lower retries for run
     _dev->set_retries(3);

@@ -80,7 +80,7 @@ bool AP_IOMCU::upload_fw(void)
     }
 
     if (!ret) {
-        debug("IO update failed sync");
+        //debug("IO update failed sync");
         return false;
     }
 
@@ -95,7 +95,7 @@ bool AP_IOMCU::upload_fw(void)
         debug("Err: unsupported bootloader revision %u", unsigned(bl_rev));
         return false;
     }
-    debug("found bootloader revision: %u", unsigned(bl_rev));
+    //debug("found bootloader revision: %u", unsigned(bl_rev));
 
     ret = erase();
     if (!ret) {
@@ -127,8 +127,8 @@ bool AP_IOMCU::upload_fw(void)
         return false;
     }
 
-    debug("update complete");
-
+    //debug("update complete");
+    hal.console->printf("CUAV:[0][IOMCU,0]\n");
     // sleep for enough time for the IO chip to boot
     hal.scheduler->delay(100);
 

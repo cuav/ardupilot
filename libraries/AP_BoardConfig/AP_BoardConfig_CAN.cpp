@@ -144,7 +144,7 @@ void AP_BoardConfig_CAN::init()
 
             _num_drivers = i + 1;
             hal.can_mgr[i]->initialized(true);
-            printf("can_mgr %d initialized well\n\r", i + 1);
+            //printf("can_mgr %d initialized well\n\r", i + 1);
 
             if (prot_type == Protocol_Type_UAVCAN) {
                 _drivers[i]._driver = _drivers[i]._uavcan =  new AP_UAVCAN;

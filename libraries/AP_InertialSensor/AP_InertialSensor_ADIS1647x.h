@@ -70,4 +70,5 @@ private:
 
     float accel_scale;
     float gyro_scale;
+    uint16_t adis_id = 0;
 };

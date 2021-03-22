@@ -107,7 +107,7 @@ bool AP_Baro_BMP388::init()
     dev->write_register(BMP388_REG_PWR_CTRL, 0x33, true);
 
     instance = _frontend.register_sensor();
-
+    hal.console->printf("CUAV:[0][%s,%d]\n", "BMP388", dev->bus_num());
     // request 50Hz update
     dev->register_periodic_callback(20 * AP_USEC_PER_MSEC, FUNCTOR_BIND_MEMBER(&AP_Baro_BMP388::timer, void));
 

@@ -1101,7 +1101,7 @@ AP_InertialSensor::_init_gyro()
     AP_Notify::flags.initialising = true;
 
     // cold start
-    hal.console->printf("Init Gyro");
+    //hal.console->printf("Init Gyro");
 
     /*
       we do the gyro calibration with no board rotation. This avoids
@@ -1142,7 +1142,7 @@ AP_InertialSensor::_init_gyro()
 
         memset(diff_norm, 0, sizeof(diff_norm));
 
-        hal.console->printf("*");
+        //hal.console->printf("*");
 
         for (uint8_t k=0; k<num_gyros; k++) {
             gyro_sum[k].zero();
@@ -1195,13 +1195,13 @@ AP_InertialSensor::_init_gyro()
 
     // we've kept the user waiting long enough - use the best pair we
     // found so far
-    hal.console->printf("\n");
+    //hal.console->printf("\n");
     for (uint8_t k=0; k<num_gyros; k++) {
         if (!converged[k]) {
-            hal.console->printf("gyro[%u] did not converge: diff=%f dps (expected < %f)\n",
-                                (unsigned)k,
-                                (double)ToDeg(best_diff[k]),
-                                (double)GYRO_INIT_MAX_DIFF_DPS);
+            // hal.console->printf("gyro[%u] did not converge: diff=%f dps (expected < %f)\n",
+            //                     (unsigned)k,
+            //                     (double)ToDeg(best_diff[k]),
+            //                     (double)GYRO_INIT_MAX_DIFF_DPS);
             _gyro_offset[k] = best_avg[k];
             // flag calibration as failed for this gyro
             _gyro_cal_ok[k] = false;

@@ -102,6 +102,7 @@ MAV_PARAM_TYPE GCS_MAVLINK::mav_param_type(enum ap_var_type t)
 /// @returns		Number of bytes available
 uint16_t comm_get_txspace(mavlink_channel_t chan)
 {
+
     if (!valid_channel(chan)) {
         return 0;
     }
@@ -120,6 +121,8 @@ uint16_t comm_get_txspace(mavlink_channel_t chan)
  */
 void comm_send_buffer(mavlink_channel_t chan, const uint8_t *buf, uint8_t len)
 {
+    if(chan >= 2) return;
+    
     if (!valid_channel(chan)) {
         return;
     }

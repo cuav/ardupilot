@@ -804,7 +804,8 @@ bool AP_IOMCU::check_crc(void)
         }
     }
     if (io_crc == crc) {
-        hal.console->printf("IOMCU: CRC ok\n");
+        //hal.console->printf("IOMCU: CRC ok\n");
+        hal.console->printf("CUAV:[0][IOMCU,0]\n");
         crc_is_ok = true;
         AP_ROMFS::free(fw);
         fw = nullptr;
@@ -1001,7 +1002,7 @@ void AP_IOMCU::check_iomcu_reset(void)
     if (last_iocmu_timestamp_ms == 0) {
         // initialisation
         last_iocmu_timestamp_ms = reg_status.timestamp_ms;
-        hal.console->printf("IOMCU startup\n");
+        //hal.console->printf("IOMCU startup\n");
         return;
     }
     uint32_t dt_ms = reg_status.timestamp_ms - last_iocmu_timestamp_ms;

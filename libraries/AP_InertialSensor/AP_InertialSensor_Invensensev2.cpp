@@ -209,10 +209,10 @@ void AP_InertialSensor_Invensensev2::start()
     // readings to fit them into an int16_t:
     _set_raw_sample_accel_multiplier(_accel_instance, multiplier_accel);
 
-    if (_fast_sampling) {
-        hal.console->printf("INV2[%u]: enabled fast sampling rate %uHz/%uHz\n",
-                            _accel_instance, _backend_rate_hz*_fifo_downsample_rate, _backend_rate_hz);
-    }
+    // if (_fast_sampling) {
+    //     hal.console->printf("INV2[%u]: enabled fast sampling rate %uHz/%uHz\n",
+    //                         _accel_instance, _backend_rate_hz*_fifo_downsample_rate, _backend_rate_hz);
+    // }
     
     // set sample rate to 1.125KHz
     _register_write(INV2REG_GYRO_SMPLRT_DIV, 0, true);
@@ -226,6 +226,14 @@ void AP_InertialSensor_Invensensev2::start()
     _dev->set_speed(AP_HAL::Device::SPEED_HIGH);
 
     _dev->get_semaphore()->give();
+    
+    if(_inv2_type == Invensensev2_ICM20948) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "ICM20948", _dev->bus_num());
+    } else if(_inv2_type == Invensensev2_ICM20648) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "ICM20648", _dev->bus_num());
+    } else if(_inv2_type == Invensensev2_ICM20649) {
+        hal.console->printf("CUAV:[0][%s,%d]\n", "ICM20649", _dev->bus_num());
+    }
 
     // setup sensor rotations from probe()
     set_gyro_orientation(_gyro_instance, _rotation);

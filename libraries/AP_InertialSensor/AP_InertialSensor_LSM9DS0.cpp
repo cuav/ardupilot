@@ -496,7 +496,7 @@ bool AP_InertialSensor_LSM9DS0::_hardware_init()
         hal.console->printf("Failed to boot LSM9DS0 5 times\n\n");
         goto fail_tries;
     }
-
+    hal.console->printf("CUAV:[0][%s,%d]\n", "LSM9DS0", _dev_gyro->bus_num());
     _spi_sem->give();
 
     return true;

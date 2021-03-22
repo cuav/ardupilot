@@ -65,7 +65,8 @@ void Storage::_storage_open(void)
     if (fram.init() && fram.read(0, _buffer, CH_STORAGE_SIZE)) {
         _save_backup();
         _initialisedType = StorageBackend::FRAM;
-        ::printf("Initialised Storage type=%d\n", _initialisedType);
+        //::printf("Initialised Storage type=%d\n", _initialisedType);
+        hal.console->printf("CUAV:[0][STORAGE,0]\n");
         return;
     }
 
@@ -115,7 +116,8 @@ void Storage::_storage_open(void)
 #endif
 
     if (_initialisedType != StorageBackend::None) {
-        ::printf("Initialised Storage type=%d\n", _initialisedType);
+        //::printf("Initialised Storage type=%d\n", _initialisedType);
+        
     } else {
         AP_HAL::panic("Unable to init Storage backend");
     }
