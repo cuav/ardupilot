@@ -267,6 +267,29 @@ float GCS_MAVLINK_Plane::vfr_hud_climbrate() const
     return AP::baro().get_climb_rate();
 }
 
+
+float GCS_MAVLINK_Plane::sht31_temp() const
+{
+
+    static float temperature = 0;
+        
+    plane.atmosphere.get_temperature(temperature);
+    printf("ArduPlane/GCS_Mavlink.cpp :temperature = %f\n",temperature);
+    return temperature;
+
+}
+
+float GCS_MAVLINK_Plane::sht31_humi() const
+{
+
+    static float humidity = 0;
+        
+    plane.atmosphere.get_humidity(humidity);
+    printf("ArduPlane/GCS_Mavlink.cpp :humidity = %f\n",humidity);
+    return humidity;
+
+}
+
 /*
   keep last HIL_STATE message to allow sending SIM_STATE
  */
@@ -556,6 +579,7 @@ static const ap_message STREAM_EXTENDED_STATUS_msgs[] = {
     MSG_GPS2_RTK,
     MSG_NAV_CONTROLLER_OUTPUT,
     MSG_FENCE_STATUS,
+    MSG_SHT31_STATUS,
     MSG_POSITION_TARGET_GLOBAL_INT,
 };
 static const ap_message STREAM_POSITION_msgs[] = {

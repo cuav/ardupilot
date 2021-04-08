@@ -816,6 +816,7 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_SCALED_PRESSURE2,      MSG_SCALED_PRESSURE2},
         { MAVLINK_MSG_ID_SCALED_PRESSURE3,      MSG_SCALED_PRESSURE3},
         { MAVLINK_MSG_ID_SENSOR_OFFSETS,        MSG_SENSOR_OFFSETS},
+        { MAVLINK_MSG_ID_SHT31_OUTPUT_STATUS,   MSG_SHT31_STATUS},
         { MAVLINK_MSG_ID_GPS_RAW_INT,           MSG_GPS_RAW},
         { MAVLINK_MSG_ID_GPS_RTK,               MSG_GPS_RTK},
         { MAVLINK_MSG_ID_GPS2_RAW,              MSG_GPS2_RAW},
@@ -2718,6 +2719,26 @@ void GCS_MAVLINK::send_accelcal_vehicle_position(uint32_t position)
             0, 0, 0, 0, 0, 0);
     }
 }
+
+
+float GCS_MAVLINK::sht31_temp() const
+{
+    return 0;  
+}
+
+float GCS_MAVLINK::sht31_humi() const
+{
+    return 0;
+}
+
+void GCS_MAVLINK::send_sht31()
+{
+    mavlink_msg_sht31_output_status_send(
+            chan,
+            sht31_temp(),
+            sht31_humi()                );
+}
+
 
 
 float GCS_MAVLINK::vfr_hud_airspeed() const
@@ -4811,6 +4832,11 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
         send_gps_global_origin();
         break;
 
+    case MSG_SHT31_STATUS:
+        CHECK_PAYLOAD_SIZE(SHT31_OUTPUT_STATUS);
+        send_sht31();
+        break;
+        
     case MSG_RPM:
         CHECK_PAYLOAD_SIZE(RPM);
         send_rpm();
