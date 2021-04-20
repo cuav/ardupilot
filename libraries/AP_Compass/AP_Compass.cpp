@@ -1143,6 +1143,30 @@ void Compass::_probe_external_i2c_compasses(void)
  */
 void Compass::_detect_backends(void)
 {
+        // lis3mdl on bus 0 with default address
+    FOREACH_I2C_INTERNAL(i) {
+        ADD_BACKEND(DRIVER_LIS3MDL, AP_Compass_LIS3MDL::probe(GET_I2C_DEVICE(i, HAL_COMPASS_LIS3MDL_I2C_ADDR),
+                    true, ROTATION_YAW_90));
+    }
+
+    // lis3mdl on bus 0 with alternate address
+    FOREACH_I2C_INTERNAL(i) {
+        ADD_BACKEND(DRIVER_LIS3MDL, AP_Compass_LIS3MDL::probe(GET_I2C_DEVICE(i, HAL_COMPASS_LIS3MDL_I2C_ADDR2),
+                    true, ROTATION_YAW_90));
+    }
+
+    // external lis3mdl on bus 1 with default address
+    FOREACH_I2C_EXTERNAL(i) {
+        ADD_BACKEND(DRIVER_LIS3MDL, AP_Compass_LIS3MDL::probe(GET_I2C_DEVICE(i, HAL_COMPASS_LIS3MDL_I2C_ADDR),
+                    true, ROTATION_YAW_90));
+    }
+
+    // external lis3mdl on bus 1 with alternate address
+    FOREACH_I2C_EXTERNAL(i) {
+        ADD_BACKEND(DRIVER_LIS3MDL, AP_Compass_LIS3MDL::probe(GET_I2C_DEVICE(i, HAL_COMPASS_LIS3MDL_I2C_ADDR2),
+                    true, ROTATION_YAW_90));
+    }
+
 #ifndef HAL_BUILD_AP_PERIPH
     if (_hil_mode) {
         _add_backend(AP_Compass_HIL::detect());

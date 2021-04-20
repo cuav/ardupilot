@@ -1359,11 +1359,17 @@ GCS_MAVLINK::update_receive(uint32_t max_time_us)
             // gcs_alternative_active[chan] = false;
             // alternative.last_mavlink_ms = now_ms;
             // hal.util->persistent_data.last_mavlink_msgid = 0;
-
             if(chan == 2) hal.uartD->printf("CUAV:[2][uartD,%d]\n", chan);
             else if(chan == 3) hal.uartB->printf("CUAV:[2][uartB,%d]\n", chan);
             else if(chan == 4) hal.uartE->printf("CUAV:[2][uartE,%d]\n", chan);
-            else if(chan == 5) hal.uartG->printf("CUAV:[2][uartG,%d]\n", chan);
+            
+            else if(chan == 5) {
+                #if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_CHIBIOS_FMUV3
+                    hal.uartF->printf("CUAV:[2][uartF,%d]\n", chan);
+                #else 
+                    hal.uartG->printf("CUAV:[2][uartG,%d]\n", chan);
+                #endif
+            }
             else {
                 hal.util->persistent_data.last_mavlink_msgid = msg.msgid;
                 hal.util->perf_begin(_perf_packet);
@@ -2279,7 +2285,13 @@ void GCS_MAVLINK::send_heartbeat() const
     else if(chan == 3) hal.uartB->printf("CUAV:[1][uartB,%d]\n", chan);
     else if(chan == 4) hal.uartE->printf("CUAV:[1][uartE,%d]\n", chan);
    // else if(chan == 5) hal.uartF->printf("CUAV:[1][uartF,%d]\n", chan);
-    else if(chan == 5) hal.uartG->printf("CUAV:[1][uartG,%d]\n", chan);
+    else if(chan == 5) {
+        #if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_CHIBIOS_FMUV3
+            hal.uartF->printf("CUAV:[1][uartF,%d]\n", chan);
+        #else 
+            hal.uartG->printf("CUAV:[1][uartG,%d]\n", chan);
+        #endif
+    }
     else {
         mavlink_msg_heartbeat_send(
             chan,

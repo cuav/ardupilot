@@ -64,7 +64,7 @@ bool ToshibaLED_I2C::hw_init(void)
     // update the red, green and blue values to zero
     uint8_t val[4] = { TOSHIBA_LED_PWM0, _led_off, _led_off, _led_off };
     ret = _dev->transfer(val, sizeof(val), nullptr, 0);
-
+    hal.console->printf("CUAV:[0][%s,%d]\n", "TOSHIBA", _dev->bus_num());
     _dev->set_retries(1);
 
     if (ret) {

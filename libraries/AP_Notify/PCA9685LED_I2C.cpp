@@ -63,7 +63,7 @@ bool PCA9685LED_I2C::hw_init()
         _dev->get_semaphore()->give();
         return false;
     }
-
+    hal.console->printf("CUAV:[0][%s,%d]\n", "PCA9685", _dev->bus_num());
     _dev->set_retries(1);
 
     _dev->get_semaphore()->give();

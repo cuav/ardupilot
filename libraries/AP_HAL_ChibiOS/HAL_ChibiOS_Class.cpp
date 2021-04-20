@@ -118,7 +118,11 @@ HAL_ChibiOS::HAL_ChibiOS() :
         &spiDeviceManager,
         &analogIn,
         &storageDriver,
+        #if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_CHIBIOS_FMUV3
+        &uartFDriver,
+        #else 
         &uartGDriver,
+        #endif
         &gpioDriver,
         &rcinDriver,
         &rcoutDriver,
@@ -178,7 +182,13 @@ static void main_loop()
     peripheral_power_enable();
 
     hal.uartA->begin(115200);
-    hal.uartG->begin(115200);
+
+    #if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_CHIBIOS_FMUV3
+         hal.uartF->begin(115200);
+    #else 
+        hal.uartG->begin(115200);
+    #endif
+
     hal.console->printf("\nCUAV:[3][InitStart,0]\n");
 
 #ifdef HAL_SPI_CHECK_CLOCK_FREQ
@@ -187,7 +197,7 @@ static void main_loop()
 #endif
 
     hal.uartB->begin(115200);
-    hal.uartC->begin(115200);	    
+    hal.uartC->begin(115200);
     hal.uartD->begin(115200);
     hal.uartE->begin(115200);
 
