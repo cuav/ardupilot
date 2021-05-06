@@ -131,7 +131,7 @@ HAL_ChibiOS::HAL_ChibiOS() :
         &spiDeviceManager,
         &analogIn,
         &storageDriver,
-        &uartADriver,
+        &uartGDriver,
         &gpioDriver,
         &rcinDriver,
         &rcoutDriver,
@@ -198,7 +198,7 @@ static void main_loop()
 
     peripheral_power_enable();
 
-    hal.serial(0)->begin(115200);
+    hal.serial(6)->begin(115200);
 
 #ifdef HAL_SPI_CHECK_CLOCK_FREQ
     // optional test of SPI clock frequencies

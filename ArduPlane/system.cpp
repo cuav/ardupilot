@@ -85,6 +85,9 @@ void Plane::init_ardupilot()
     // initialise airspeed sensor
     airspeed.init();
 
+    // initialise Atmos sensor
+    atmosphere.init();
+
     AP::compass().set_log_bit(MASK_LOG_COMPASS);
     AP::compass().init();
 

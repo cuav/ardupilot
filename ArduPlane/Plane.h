@@ -56,6 +56,7 @@
 #include <AP_Logger/AP_Logger.h>
 #include <AP_Scheduler/AP_Scheduler.h>       // main loop scheduler
 #include <AP_Scheduler/PerfInfo.h>                  // loop perf monitoring
+#include <AP_Atmos/AP_Atmos.h>
 
 #include <AP_Navigation/AP_Navigation.h>
 #include <AP_L1_Control/AP_L1_Control.h>
@@ -401,6 +402,9 @@ private:
 
     // Airspeed Sensors
     AP_Airspeed airspeed;
+
+    // Atmos Sensors
+    AP_Atmos atmosphere;
 
     // ACRO controller state
     struct {

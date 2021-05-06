@@ -816,6 +816,7 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_SCALED_PRESSURE2,      MSG_SCALED_PRESSURE2},
         { MAVLINK_MSG_ID_SCALED_PRESSURE3,      MSG_SCALED_PRESSURE3},
         { MAVLINK_MSG_ID_SENSOR_OFFSETS,        MSG_SENSOR_OFFSETS},
+        { MAVLINK_MSG_ID_ATMOSPHERE_OUTPUT_STATUS,   MSG_ATMOSPHERE_STATUS},
         { MAVLINK_MSG_ID_GPS_RAW_INT,           MSG_GPS_RAW},
         { MAVLINK_MSG_ID_GPS_RTK,               MSG_GPS_RTK},
         { MAVLINK_MSG_ID_GPS2_RAW,              MSG_GPS2_RAW},
@@ -2717,6 +2718,24 @@ void GCS_MAVLINK::send_accelcal_vehicle_position(uint32_t position)
             (float) position,
             0, 0, 0, 0, 0, 0);
     }
+}
+
+float GCS_MAVLINK::atmosphere_temp() const
+{
+    return 0;  
+}
+
+float GCS_MAVLINK::atmosphere_humi() const
+{
+    return 0;
+}
+
+void GCS_MAVLINK::send_atmosphere()
+{
+    mavlink_msg_atmosphere_output_status_send(
+            chan,
+            atmosphere_temp(),
+            atmosphere_humi()                );
 }
 
 
@@ -5041,6 +5060,11 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
     case MSG_VFR_HUD:
         CHECK_PAYLOAD_SIZE(VFR_HUD);
         send_vfr_hud();
+        break;
+
+    case MSG_ATMOSPHERE_STATUS:
+        CHECK_PAYLOAD_SIZE(ATMOSPHERE_OUTPUT_STATUS);
+        send_atmosphere();
         break;
 
     case MSG_VIBRATION:
