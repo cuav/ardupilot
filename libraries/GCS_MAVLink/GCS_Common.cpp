@@ -794,6 +794,7 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         ap_message msg_id;
     } map[] {
         { MAVLINK_MSG_ID_HEARTBEAT,             MSG_HEARTBEAT},
+        { MAVLINK_MSG_ID_ATMOSPHERE_OUTPUT_STATUS,   MSG_ATMOSPHERE_STATUS},
         { MAVLINK_MSG_ID_ATTITUDE,              MSG_ATTITUDE},
         { MAVLINK_MSG_ID_ATTITUDE_QUATERNION,   MSG_ATTITUDE_QUATERNION},
         { MAVLINK_MSG_ID_GLOBAL_POSITION_INT,   MSG_LOCATION},
@@ -2719,6 +2720,24 @@ void GCS_MAVLINK::send_accelcal_vehicle_position(uint32_t position)
     }
 }
 
+float GCS_MAVLINK::atmosphere_temp() const
+{
+    return 0;  
+}
+
+float GCS_MAVLINK::atmosphere_humi() const
+{
+    return 0;
+}
+
+
+void GCS_MAVLINK::send_atmosphere()
+{
+    mavlink_msg_atmosphere_output_status_send(
+            chan,
+            atmosphere_temp(),
+            atmosphere_humi()                );
+}
 
 float GCS_MAVLINK::vfr_hud_airspeed() const
 {
@@ -5043,6 +5062,11 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
         send_vfr_hud();
         break;
 
+     case MSG_ATMOSPHERE_STATUS:
+        CHECK_PAYLOAD_SIZE(ATMOSPHERE_OUTPUT_STATUS);
+        send_atmosphere();
+        break;
+        
     case MSG_VIBRATION:
         CHECK_PAYLOAD_SIZE(VIBRATION);
         send_vibration();
