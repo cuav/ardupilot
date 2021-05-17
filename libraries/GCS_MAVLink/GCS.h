@@ -252,6 +252,7 @@ public:
     void send_extended_sys_state() const;
     void send_local_position() const;
     void send_vfr_hud();
+    void send_atmosphere();
     void send_vibration() const;
     void send_mount_status() const;
     void send_named_float(const char *name, float value) const;
@@ -523,6 +524,9 @@ protected:
     virtual float vfr_hud_airspeed() const;
     virtual int16_t vfr_hud_throttle() const { return 0; }
     virtual float vfr_hud_alt() const;
+
+    virtual float atmosphere_temp() const;
+    virtual float atmosphere_humi() const;
 
     static constexpr const float magic_force_arm_value = 2989.0f;
     static constexpr const float magic_force_disarm_value = 21196.0f;

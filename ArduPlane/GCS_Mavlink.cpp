@@ -271,6 +271,28 @@ float GCS_MAVLINK_Plane::vfr_hud_climbrate() const
     return AP::baro().get_climb_rate();
 }
 
+float GCS_MAVLINK_Plane::atmosphere_temp() const
+{
+
+    static float temperature = 0;
+        
+    plane.atmosphere.get_temperature(temperature);
+    printf("ArduPlane/GCS_Mavlink.cpp :temperature = %f\n",temperature);
+    return temperature;
+
+}
+
+float GCS_MAVLINK_Plane::atmosphere_humi() const
+{
+
+    static float humidity = 0;
+        
+    plane.atmosphere.get_humidity(humidity);
+    printf("ArduPlane/GCS_Mavlink.cpp :humidity = %f\n",humidity);
+    return humidity;
+
+}
+
 /*
   keep last HIL_STATE message to allow sending SIM_STATE
  */
@@ -547,6 +569,7 @@ static const ap_message STREAM_RAW_SENSORS_msgs[] = {
     MSG_SCALED_PRESSURE,
     MSG_SCALED_PRESSURE2,
     MSG_SCALED_PRESSURE3,
+    MSG_ATMOSPHERE_STATUS,
     MSG_SENSOR_OFFSETS
 };
 static const ap_message STREAM_EXTENDED_STATUS_msgs[] = {

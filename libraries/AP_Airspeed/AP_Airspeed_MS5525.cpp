@@ -275,6 +275,8 @@ bool AP_Airspeed_MS5525::get_differential_pressure(float &_pressure)
     }
     _pressure = pressure;
 
+    printf("_pressure = %f\n",_pressure);
+
     return true;
 }
 
@@ -294,5 +296,6 @@ bool AP_Airspeed_MS5525::get_temperature(float &_temperature)
     }
 
     _temperature = temperature;
+    printf("_temperature = %f\n",_temperature);
     return true;
 }
