@@ -140,6 +140,7 @@ bool AP_Airspeed_UAVCAN::get_differential_pressure(float &pressure)
     }
 
     pressure = _pressure;
+    printf("UAVCAN:pressure = %f\n",pressure);
 
     return true;
 }
@@ -156,6 +157,7 @@ bool AP_Airspeed_UAVCAN::get_temperature(float &temperature)
     }
 
     temperature = _temperature;
+    printf("UAVCAN:temperature = %f\n",temperature);
 
     return true;
 }

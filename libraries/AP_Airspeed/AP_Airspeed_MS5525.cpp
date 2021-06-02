@@ -132,6 +132,7 @@ bool AP_Airspeed_MS5525::read_prom(void)
             return false;
         }
         prom[i] = be16toh(val);
+        // printf("prom[%d] = %d\n",i,prom[i]);
         if (prom[i] != 0) {
             all_zero = false;
         }
@@ -268,6 +269,10 @@ bool AP_Airspeed_MS5525::get_differential_pressure(float &_pressure)
         return false;
     }
 
+    printf("MS5525_press time= %d\n",AP_HAL::millis() - press_time);
+
+    press_time = AP_HAL::millis();
+
     if (press_count > 0) {
         pressure = pressure_sum / press_count;
         press_count = 0;
@@ -288,6 +293,12 @@ bool AP_Airspeed_MS5525::get_temperature(float &_temperature)
     if ((AP_HAL::millis() - last_sample_time_ms) > 100) {
         return false;
     }
+    
+    // static uint64_t time = 0;
+
+    printf("MS5525_temp time= %d\n",AP_HAL::millis() - temp_time);
+
+    temp_time = AP_HAL::millis();
 
     if (temp_count > 0) {
         temperature = temperature_sum / temp_count;

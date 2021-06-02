@@ -361,6 +361,7 @@ void Plane::airspeed_ratio_update(void)
         return;
     }
     const Vector3f &vg = gps.velocity();
+    printf("airspeed.update_calibration \n");
     airspeed.update_calibration(vg, aparm.airspeed_max);
 }
 #endif // AP_AIRSPEED_AUTOCAL_ENABLE

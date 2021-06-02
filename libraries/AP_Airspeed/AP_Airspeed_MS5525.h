@@ -65,6 +65,9 @@ private:
     
     uint32_t last_sample_time_ms;
 
+    uint32_t press_time;
+    uint32_t temp_time;
+
     uint16_t prom[8];
     uint8_t state;
     int32_t D1;

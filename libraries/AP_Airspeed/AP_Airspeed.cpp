@@ -531,6 +531,7 @@ void AP_Airspeed::read(uint8_t i)
         state[i].last_pressure  = fabsf(airspeed_pressure);
         state[i].raw_airspeed   = sqrtf(fabsf(airspeed_pressure) * param[i].ratio);
         state[i].airspeed       = sqrtf(fabsf(state[i].filtered_pressure) * param[i].ratio);
+        printf("state[%d].airspeed = %f\n",i,state[i].airspeed);
         break;
     }
 
@@ -553,6 +554,7 @@ void AP_Airspeed::update(bool log)
     // debugging until we get MAVLink support for 2nd airspeed sensor
     if (enabled(1)) {
         gcs().send_named_float("AS2", get_airspeed(1));
+        // printf(" get_airspeed(1) = %f\n", get_airspeed(1));
     }
 #endif
 

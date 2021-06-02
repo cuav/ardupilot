@@ -12,6 +12,7 @@
 #include <AP_Baro/AP_Baro.h>
 
 #include "AP_Airspeed.h"
+#include <stdio.h>
 
 extern const AP_HAL::HAL& hal;
 
@@ -159,7 +160,9 @@ void AP_Airspeed::update_calibration(uint8_t i, const Vector3f &vground, int16_t
  */
 void AP_Airspeed::update_calibration(const Vector3f &vground, int16_t max_airspeed_allowed_during_cal)
 {
+    printf("AP_Airspeed::update_calibration \n");
     for (uint8_t i=0; i<AIRSPEED_MAX_SENSORS; i++) {
+       printf("i = %d\n",i); 
         update_calibration(i, vground, max_airspeed_allowed_during_cal);
     }
     send_airspeed_calibration(vground);
@@ -168,7 +171,9 @@ void AP_Airspeed::update_calibration(const Vector3f &vground, int16_t max_airspe
 
 void AP_Airspeed::send_airspeed_calibration(const Vector3f &vground)
 {
+    printf("#ifndef AP_AIRSPEED_AUTOCAL_ENABLE\n");
 #if AP_AIRSPEED_AUTOCAL_ENABLE
+    printf("send_airspeed_calibration:primary= %d\n",primary);
     const mavlink_airspeed_autocal_t packet{
         vx: vground.x,
         vy: vground.y,
