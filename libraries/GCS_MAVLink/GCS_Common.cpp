@@ -851,6 +851,7 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_WINCH_STATUS,          MSG_WINCH_STATUS},
         { MAVLINK_MSG_ID_WATER_DEPTH,           MSG_WATER_DEPTH},
         { MAVLINK_MSG_ID_HIGH_LATENCY2,         MSG_HIGH_LATENCY2},
+        { MAVLINK_MSG_ID_HYGROMETER_SENSOR,     MSG_HYGROMETER_STATUS},
             };
 
     for (uint8_t i=0; i<ARRAY_SIZE(map); i++) {
@@ -2733,6 +2734,30 @@ void GCS_MAVLINK::send_vfr_hud()
         abs(vfr_hud_throttle()),
         vfr_hud_alt(),
         vfr_hud_climbrate());
+}
+
+int16_t GCS_MAVLINK::hygrometer_temp() const
+{
+    return 0;  
+}
+
+uint16_t GCS_MAVLINK::hygrometer_humi() const
+{
+    return 0;
+}
+
+uint8_t GCS_MAVLINK::hygrometer_id() const
+{
+    return 0;
+}
+
+void GCS_MAVLINK::send_hygrometer()
+{
+    mavlink_msg_hygrometer_sensor_send(
+            chan,
+            hygrometer_id(),
+            hygrometer_temp(),
+            hygrometer_humi());
 }
 
 /*
@@ -5069,6 +5094,11 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
         CHECK_PAYLOAD_SIZE(VFR_HUD);
         send_vfr_hud();
         break;
+
+    case MSG_HYGROMETER_STATUS:
+        CHECK_PAYLOAD_SIZE(HYGROMETER_SENSOR); //MAVLINK's name
+        send_hygrometer();
+    break;
 
     case MSG_VIBRATION:
         CHECK_PAYLOAD_SIZE(VIBRATION);

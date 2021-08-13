@@ -264,6 +264,39 @@ void GCS_MAVLINK_Plane::send_wind() const
         wind.z);
 }
 
+int16_t GCS_MAVLINK_Plane::hygrometer_temp() const
+{
+
+    static float temperature = 0;
+        
+    plane.hygrometer.get_temperature(temperature);
+    printf("ArduPlane/GCS_Mavlink.cpp :temperature = %f\n",temperature);
+    return (int16_t)(100*temperature);
+
+}
+
+uint16_t GCS_MAVLINK_Plane::hygrometer_humi() const
+{
+
+    static float humidity = 0;
+        
+    plane.hygrometer.get_humidity(humidity);
+    printf("ArduPlane/GCS_Mavlink.cpp :humidity = %f\n",humidity);
+    return (uint16_t)(100*humidity);
+
+}
+
+uint8_t GCS_MAVLINK_Plane::hygrometer_id() const
+{
+
+    static uint8_t id = 0;
+        
+    plane.hygrometer.get_id(id);
+    printf("ArduPlane/GCS_Mavlink.cpp :id = %d\n",id);
+    return id;
+
+}
+
 // sends a single pid info over the provided channel
 void GCS_MAVLINK_Plane::send_pid_info(const AP_Logger::PID_Info *pid_info,
                           const uint8_t axis, const float achieved)
@@ -494,6 +527,7 @@ static const ap_message STREAM_RAW_SENSORS_msgs[] = {
     MSG_SCALED_PRESSURE,
     MSG_SCALED_PRESSURE2,
     MSG_SCALED_PRESSURE3,
+    MSG_HYGROMETER_STATUS,
     MSG_SENSOR_OFFSETS
 };
 static const ap_message STREAM_EXTENDED_STATUS_msgs[] = {
