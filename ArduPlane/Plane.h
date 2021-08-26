@@ -46,6 +46,7 @@
 #include <AP_RPM/AP_RPM.h>
 #include <AP_Stats/AP_Stats.h>     // statistics library
 #include <AP_Beacon/AP_Beacon.h>
+#include <AP_Hygrometer/AP_Hygrometer.h>
 
 #include <AP_AdvancedFailsafe/AP_AdvancedFailsafe.h>
 #include <APM_Control/APM_Control.h>
@@ -124,7 +125,8 @@
 /*
   main APM:Plane class
  */
-class Plane : public AP_Vehicle {
+class Plane : public AP_Vehicle
+{
 public:
     friend class GCS_MAVLINK_Plane;
     friend class Parameters;
@@ -237,7 +239,10 @@ private:
 
     // GCS selection
     GCS_Plane _gcs; // avoid using this; use gcs()
-    GCS_Plane &gcs() { return _gcs; }
+    GCS_Plane &gcs()
+    {
+        return _gcs;
+    }
 
     // selected navigation controller
     AP_Navigation *nav_controller = &L1_controller;
@@ -247,7 +252,7 @@ private:
 
     // Camera
 #if CAMERA == ENABLED
-    AP_Camera camera{MASK_LOG_CAMERA, current_loc};
+    AP_Camera camera {MASK_LOG_CAMERA, current_loc};
 #endif
 
 #if OPTFLOW == ENABLED
@@ -360,7 +365,8 @@ private:
         float approach_direction_deg;
     } vtol_approach_s;
 
-    bool any_failsafe_triggered() {
+    bool any_failsafe_triggered()
+    {
         return failsafe.state != FAILSAFE_NONE || battery.has_failsafed() || failsafe.adsb;
     }
 
@@ -397,11 +403,14 @@ private:
 
     // Battery Sensors
     AP_BattMonitor battery{MASK_LOG_CURRENT,
-                           FUNCTOR_BIND_MEMBER(&Plane::handle_battery_failsafe, void, const char*, const int8_t),
-                           _failsafe_priorities};
+                       FUNCTOR_BIND_MEMBER(&Plane::handle_battery_failsafe, void, const char*, const int8_t),
+                       _failsafe_priorities};
 
     // Airspeed Sensors
     AP_Airspeed airspeed;
+
+    // Hygrometer Sensors
+    AP_Hygrometer hygrometer;
 
     // ACRO controller state
     struct {
@@ -614,27 +623,27 @@ private:
 
     // Mission library
     AP_Mission mission{
-            FUNCTOR_BIND_MEMBER(&Plane::start_command_callback, bool, const AP_Mission::Mission_Command &),
-            FUNCTOR_BIND_MEMBER(&Plane::verify_command_callback, bool, const AP_Mission::Mission_Command &),
-            FUNCTOR_BIND_MEMBER(&Plane::exit_mission_callback, void)};
+        FUNCTOR_BIND_MEMBER(&Plane::start_command_callback, bool, const AP_Mission::Mission_Command &),
+        FUNCTOR_BIND_MEMBER(&Plane::verify_command_callback, bool, const AP_Mission::Mission_Command &),
+        FUNCTOR_BIND_MEMBER(&Plane::exit_mission_callback, void)};
 
 
 #if PARACHUTE == ENABLED
-    AP_Parachute parachute{relay};
+    AP_Parachute parachute {relay};
 #endif
 
     // terrain handling
 #if AP_TERRAIN_AVAILABLE
-    AP_Terrain terrain{mission};
+    AP_Terrain terrain {mission};
 #endif
 
     AP_Landing landing{mission,ahrs,SpdHgt_Controller,nav_controller,aparm,
-            FUNCTOR_BIND_MEMBER(&Plane::set_target_altitude_proportion, void, const Location&, float),
-            FUNCTOR_BIND_MEMBER(&Plane::constrain_target_altitude_location, void, const Location&, const Location&),
-            FUNCTOR_BIND_MEMBER(&Plane::adjusted_altitude_cm, int32_t),
-            FUNCTOR_BIND_MEMBER(&Plane::adjusted_relative_altitude_cm, int32_t),
-            FUNCTOR_BIND_MEMBER(&Plane::disarm_if_autoland_complete, void),
-            FUNCTOR_BIND_MEMBER(&Plane::update_flight_stage, void)};
+                   FUNCTOR_BIND_MEMBER(&Plane::set_target_altitude_proportion, void, const Location&, float),
+                   FUNCTOR_BIND_MEMBER(&Plane::constrain_target_altitude_location, void, const Location&, const Location&),
+                   FUNCTOR_BIND_MEMBER(&Plane::adjusted_altitude_cm, int32_t),
+                   FUNCTOR_BIND_MEMBER(&Plane::adjusted_relative_altitude_cm, int32_t),
+                   FUNCTOR_BIND_MEMBER(&Plane::disarm_if_autoland_complete, void),
+                   FUNCTOR_BIND_MEMBER(&Plane::update_flight_stage, void)};
 #if HAL_ADSB_ENABLED
     AP_ADSB adsb;
 
@@ -803,9 +812,9 @@ private:
         QLAND           = 1U << 10,
         QLOITER         = 1U << 11,
     };
-    struct TerrainLookupTable{
-       Mode::Number mode_num;
-       terrain_bitmask bitmask;
+    struct TerrainLookupTable {
+        Mode::Number mode_num;
+        terrain_bitmask bitmask;
     };
     static const TerrainLookupTable Terrain_lookup[];
 #endif
@@ -934,7 +943,10 @@ private:
     void autotune_restore(void);
     void autotune_enable(bool enable);
     bool fly_inverted(void);
-    uint8_t get_mode() const override { return (uint8_t)control_mode->mode_number(); }
+    uint8_t get_mode() const override
+    {
+        return (uint8_t)control_mode->mode_number();
+    }
     Mode *mode_from_mode_num(const enum Mode::Number num);
 
     // events.cpp
@@ -1105,14 +1117,14 @@ private:
 
     // list of priorities, highest priority first
     static constexpr int8_t _failsafe_priorities[] = {
-                                                      Failsafe_Action_Terminate,
-                                                      Failsafe_Action_Parachute,
-                                                      Failsafe_Action_QLand,
-                                                      Failsafe_Action_Land,
-                                                      Failsafe_Action_RTL,
-                                                      Failsafe_Action_None,
-                                                      -1 // the priority list must end with a sentinel of -1
-                                                     };
+        Failsafe_Action_Terminate,
+        Failsafe_Action_Parachute,
+        Failsafe_Action_QLand,
+        Failsafe_Action_Land,
+        Failsafe_Action_RTL,
+        Failsafe_Action_None,
+        -1 // the priority list must end with a sentinel of -1
+    };
     static_assert(_failsafe_priorities[ARRAY_SIZE(_failsafe_priorities) - 1] == -1,
                   "_failsafe_priorities is missing the sentinel");
 
