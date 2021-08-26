@@ -56,6 +56,7 @@
 #include <AP_ADSB/AP_ADSB.h>
 #include "AP_UAVCAN_DNA_Server.h"
 #include <AP_Logger/AP_Logger.h>
+#include <AP_Hygrometer/AP_Hygrometer_UAVCAN.h>
 
 #define LED_DELAY_US 50000
 
@@ -174,7 +175,8 @@ AP_UAVCAN *AP_UAVCAN::get_uavcan(uint8_t driver_index)
     return static_cast<AP_UAVCAN*>(AP::can().get_driver(driver_index));
 }
 
-bool AP_UAVCAN::add_interface(AP_HAL::CANIface* can_iface) {
+bool AP_UAVCAN::add_interface(AP_HAL::CANIface* can_iface)
+{
 
     if (_iface_mgr == nullptr) {
         _iface_mgr = new uavcan::CanIfaceMgr();
@@ -187,7 +189,7 @@ bool AP_UAVCAN::add_interface(AP_HAL::CANIface* can_iface) {
 
     if (!_iface_mgr->add_interface(can_iface)) {
         debug_uavcan(AP_CANManager::LOG_ERROR, "UAVCAN: can't add UAVCAN interface\n\r");
-        return false;   
+        return false;
     }
     return true;
 }
@@ -275,6 +277,7 @@ void AP_UAVCAN::init(uint8_t driver_index, bool enable_filters)
     AP_Airspeed_UAVCAN::subscribe_msgs(this);
     AP_OpticalFlow_HereFlow::subscribe_msgs(this);
     AP_RangeFinder_UAVCAN::subscribe_msgs(this);
+    AP_Hygrometer_UAVCAN::subscribe_msgs(this);
 
     act_out_array[driver_index] = new uavcan::Publisher<uavcan::equipment::actuator::ArrayCommand>(*_node);
     act_out_array[driver_index]->setTxTimeout(uavcan::MonotonicDuration::fromMSec(2));
@@ -303,7 +306,7 @@ void AP_UAVCAN::init(uint8_t driver_index, bool enable_filters)
     rtcm_stream[driver_index] = new uavcan::Publisher<uavcan::equipment::gnss::RTCMStream>(*_node);
     rtcm_stream[driver_index]->setTxTimeout(uavcan::MonotonicDuration::fromMSec(20));
     rtcm_stream[driver_index]->setPriority(uavcan::TransferPriority::OneHigherThanLowest);
-    
+
     param_get_set_client[driver_index] = new uavcan::ServiceClient<uavcan::protocol::param::GetSet, ParamGetSetCb>(*_node, ParamGetSetCb(this, &AP_UAVCAN::handle_param_get_set_response));
 
     param_execute_opcode_client[driver_index] = new uavcan::ServiceClient<uavcan::protocol::param::ExecuteOpcode, ParamExecuteOpcodeCb>(*_node, ParamExecuteOpcodeCb(this, &AP_UAVCAN::handle_param_save_response));
@@ -332,7 +335,7 @@ void AP_UAVCAN::init(uint8_t driver_index, bool enable_filters)
     if (debug_listener[driver_index]) {
         debug_listener[driver_index]->start(DebugCb(this, &handle_debug));
     }
-    
+
     _led_conf.devices_count = 0;
     if (enable_filters) {
         configureCanAcceptanceFilters(*_node);
@@ -656,7 +659,8 @@ void AP_UAVCAN::safety_state_send()
     }
     _last_safety_state_ms = now;
 
-    { // handle SafetyState
+    {
+        // handle SafetyState
         ardupilot::indication::SafetyState safety_msg;
         switch (hal.util->safety_switch_state()) {
         case AP_HAL::Util::SAFETY_ARMED:
@@ -672,10 +676,11 @@ void AP_UAVCAN::safety_state_send()
         safety_state[_driver_index]->broadcast(safety_msg);
     }
 
-    { // handle ArmingStatus
+    {
+        // handle ArmingStatus
         uavcan::equipment::safety::ArmingStatus arming_msg;
         arming_msg.status = AP::arming().is_armed() ? uavcan::equipment::safety::ArmingStatus::STATUS_FULLY_ARMED :
-                                                      uavcan::equipment::safety::ArmingStatus::STATUS_DISARMED;
+                            uavcan::equipment::safety::ArmingStatus::STATUS_DISARMED;
         arming_status[_driver_index]->broadcast(arming_msg);
     }
 }
@@ -820,13 +825,14 @@ void AP_UAVCAN::handle_ESC_status(AP_UAVCAN* ap_uavcan, uint8_t node_id, const E
 
     ap_uavcan->update_rpm(esc_index, cb.msg->rpm);
     ap_uavcan->update_telem_data(esc_index, t,
-        AP_ESC_Telem_Backend::TelemetryType::CURRENT
-            | AP_ESC_Telem_Backend::TelemetryType::VOLTAGE
-            | AP_ESC_Telem_Backend::TelemetryType::TEMPERATURE);
+                                 AP_ESC_Telem_Backend::TelemetryType::CURRENT
+                                 | AP_ESC_Telem_Backend::TelemetryType::VOLTAGE
+                                 | AP_ESC_Telem_Backend::TelemetryType::TEMPERATURE);
 #endif
 }
 
-bool AP_UAVCAN::is_esc_data_index_valid(const uint8_t index) {
+bool AP_UAVCAN::is_esc_data_index_valid(const uint8_t index)
+{
     if (index > UAVCAN_SRV_NUMBER) {
         // printf("UAVCAN: invalid esc index: %d. max index allowed: %d\n\r", index, UAVCAN_SRV_NUMBER);
         return false;
@@ -1015,7 +1021,7 @@ void AP_UAVCAN::send_reboot_request(uint8_t node_id)
     uavcan::protocol::RestartNode::Request request;
     request.magic_number = uavcan::protocol::RestartNode::Request::MAGIC_NUMBER;
     uavcan::ServiceClient<uavcan::protocol::RestartNode> client(*_node);
-    client.setCallback([](const uavcan::ServiceCallResult<uavcan::protocol::RestartNode>& call_result){});
+    client.setCallback([](const uavcan::ServiceCallResult<uavcan::protocol::RestartNode>& call_result) {});
 
     client.call(node_id, request);
 }
