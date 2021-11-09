@@ -73,7 +73,7 @@ float Sub::get_roi_yaw()
 float Sub::get_look_ahead_yaw()
 {
     const Vector3f& vel = inertial_nav.get_velocity();
-    float speed = norm(vel.x,vel.y);
+    const float speed = vel.xy().length();
     // Commanded Yaw to automatically look ahead.
     if (position_ok() && (speed > YAW_LOOK_AHEAD_MIN_SPEED)) {
         yaw_look_ahead_bearing = degrees(atan2f(vel.y,vel.x))*100.0f;
@@ -147,8 +147,9 @@ float Sub::get_surface_tracking_climb_rate(int16_t target_rate, float current_al
     }
 
     // do not let target altitude get too far from current altitude above ground
-    // Note: the 750cm limit is perhaps too wide but is consistent with the regular althold limits and helps ensure a smooth transition
-    target_rangefinder_alt = constrain_float(target_rangefinder_alt,rangefinder_state.alt_cm-pos_control.get_leash_down_z(),rangefinder_state.alt_cm+pos_control.get_leash_up_z());
+    target_rangefinder_alt = constrain_float(target_rangefinder_alt,
+        rangefinder_state.alt_cm - pos_control.get_pos_error_z_down_cm(),
+        rangefinder_state.alt_cm + pos_control.get_pos_error_z_up_cm());
 
     // calc desired velocity correction from target rangefinder alt vs actual rangefinder alt (remove the error already passed to Altitude controller to avoid oscillations)
     distance_error = (target_rangefinder_alt - rangefinder_state.alt_cm) - (current_alt_target - current_alt);

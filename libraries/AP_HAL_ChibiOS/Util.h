@@ -59,10 +59,9 @@ public:
     bool get_system_id(char buf[40]) override;
     bool get_system_id_unformatted(uint8_t buf[], uint8_t &len) override;
 
-#ifdef HAL_PWM_ALARM
-    bool toneAlarm_init() override;
+    bool toneAlarm_init(uint8_t types) override;
     void toneAlarm_set_buzzer_tone(float frequency, float volume, uint32_t duration_ms) override;
-#endif
+    static uint8_t _toneAlarm_types;
 
     // return true if the reason for the reboot was a watchdog reset
     bool was_watchdog_reset() const override;
@@ -90,7 +89,16 @@ public:
 #endif
     // request information on uart I/O
     virtual void uart_info(ExpandingString &str) override;
-    
+
+    // returns random values
+    bool get_random_vals(uint8_t* data, size_t size) override;
+
+    // returns true random values
+    bool get_true_random_vals(uint8_t* data, size_t size, uint32_t timeout_us) override;
+
+    // set armed state
+    void set_soft_armed(const bool b) override;
+
 private:
 #ifdef HAL_PWM_ALARM
     struct ToneAlarmPwmGroup {
@@ -127,4 +135,13 @@ private:
     // save/load key persistent parameters in bootloader sector
     bool get_persistent_params(ExpandingString &str) const;
 #endif
+
+    // log info on stack usage
+    void log_stack_info(void) override;
+
+#if defined(HAL_CRASH_DUMP_FLASHPAGE) && !defined(HAL_BOOTLOADER_BUILD)
+    // get last crash dump
+    void last_crash_dump(ExpandingString &str) const override;
+#endif
+
 };

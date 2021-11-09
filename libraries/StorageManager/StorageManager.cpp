@@ -1,5 +1,5 @@
 /*
-   Please contribute your ideas! See https://dev.ardupilot.org for details
+   Please contribute your ideas! See https://ardupilot.org/dev for details
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -19,14 +19,13 @@
   of storage offsets to available storage
  */
 
+#include <AP_Vehicle/AP_Vehicle.h>
 #include <AP_HAL/AP_HAL.h>
-#include <AP_Vehicle/AP_Vehicle_Type.h>
 #include <AP_Math/AP_Math.h>
 
 #include "StorageManager.h"
 
 #include <stdio.h>
-
 
 extern const AP_HAL::HAL& hal;
 
@@ -43,7 +42,7 @@ const StorageManager::StorageArea StorageManager::layout[STORAGE_NUM_AREAS] = {
     { StorageParam,   0,     HAL_STORAGE_SIZE}
 };
 
-#elif !APM_BUILD_TYPE(APM_BUILD_ArduCopter)
+#elif !APM_BUILD_COPTER_OR_HELI
 
 /*
   layout for fixed wing and rovers
@@ -266,6 +265,16 @@ uint32_t StorageAccess::read_uint32(uint16_t loc) const
 }
 
 /*
+  read a float
+ */
+float StorageAccess::read_float(uint16_t loc) const
+{
+    float v;
+    read_block(&v, loc, sizeof(v));
+    return v;
+}
+
+/*
   write a byte
  */
 void StorageAccess::write_byte(uint16_t loc, uint8_t value) const
@@ -285,6 +294,14 @@ void StorageAccess::write_uint16(uint16_t loc, uint16_t value) const
   write a uint32
  */
 void StorageAccess::write_uint32(uint16_t loc, uint32_t value) const
+{
+    write_block(loc, &value, sizeof(value));
+}
+
+/*
+  write a float
+ */
+void StorageAccess::write_float(uint16_t loc, float value) const
 {
     write_block(loc, &value, sizeof(value));
 }

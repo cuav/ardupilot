@@ -43,6 +43,10 @@
 static_assert(SCRIPTING_STACK_SIZE >= SCRIPTING_STACK_MIN_SIZE, "Scripting requires a larger minimum stack size");
 static_assert(SCRIPTING_STACK_SIZE <= SCRIPTING_STACK_MAX_SIZE, "Scripting requires a smaller stack size");
 
+#ifndef SCRIPTING_ENABLE_DEFAULT
+#define SCRIPTING_ENABLE_DEFAULT 0
+#endif
+
 extern const AP_HAL::HAL& hal;
 
 const AP_Param::GroupInfo AP_Scripting::var_info[] = {
@@ -52,7 +56,7 @@ const AP_Param::GroupInfo AP_Scripting::var_info[] = {
     // @Values: 0:None,1:Lua Scripts
     // @RebootRequired: True
     // @User: Advanced
-    AP_GROUPINFO_FLAGS("ENABLE", 1, AP_Scripting, _enable, 0, AP_PARAM_FLAG_ENABLE),
+    AP_GROUPINFO_FLAGS("ENABLE", 1, AP_Scripting, _enable, SCRIPTING_ENABLE_DEFAULT, AP_PARAM_FLAG_ENABLE),
 
     // @Param: VM_I_COUNT
     // @DisplayName: Scripting Virtual Machine Instruction Count
@@ -150,6 +154,14 @@ MAV_RESULT AP_Scripting::handle_command_int_packet(const mavlink_command_int_t &
         case SCRIPTING_CMD_REPL_STOP:
             repl_stop();
             return MAV_RESULT_ACCEPTED;
+        case SCRIPTING_CMD_STOP:
+            _restart = false;
+            _stop = true;
+            return MAV_RESULT_ACCEPTED;
+        case SCRIPTING_CMD_STOP_AND_RESTART:
+            _restart = true;
+            _stop = true;
+            return MAV_RESULT_ACCEPTED;
         case SCRIPTING_CMD_ENUM_END: // cope with MAVLink generator appending to our enum
             break;
     }
@@ -193,17 +205,67 @@ void AP_Scripting::repl_stop(void) {
 }
 
 void AP_Scripting::thread(void) {
-    lua_scripts *lua = new lua_scripts(_script_vm_exec_count, _script_heap_size, _debug_level, terminal);
-    if (lua == nullptr || !lua->heap_allocated()) {
-        gcs().send_text(MAV_SEVERITY_CRITICAL, "Unable to allocate scripting memory");
+    while (true) {
+        // reset flags
+        _stop = false;
+        _restart = false;
+
+        lua_scripts *lua = new lua_scripts(_script_vm_exec_count, _script_heap_size, _debug_level, terminal);
+        if (lua == nullptr || !lua->heap_allocated()) {
+            gcs().send_text(MAV_SEVERITY_CRITICAL, "Unable to allocate scripting memory");
+            _init_failed = true;
+        } else {
+            // run won't return while scripting is still active
+            lua->run();
+
+            // only reachable if the lua backend has died for any reason
+            gcs().send_text(MAV_SEVERITY_CRITICAL, "Scripting has stopped");
+        }
         delete lua;
-        _init_failed = true;
+
+        bool cleared = false;
+        while(true) {
+            // 1hz check if we should restart
+            hal.scheduler->delay(1000);
+            if (!enabled()) {
+                // enable must be put to 0 and back to 1 to restart from params
+                cleared = true;
+                continue;
+            }
+            // must be enabled to get this far
+            if (cleared || _restart) {
+                gcs().send_text(MAV_SEVERITY_CRITICAL, "Scripting restated");
+                break;
+            }
+            if (_debug_level > 0) {
+                gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: scripting stopped");
+            }
+        }
+    }
+}
+
+void AP_Scripting::handle_mission_command(const AP_Mission::Mission_Command& cmd_in)
+{
+    if (!_enable) {
         return;
     }
-    lua->run();
 
-    // only reachable if the lua backend has died for any reason
-    gcs().send_text(MAV_SEVERITY_CRITICAL, "Scripting has stopped");
+    if (mission_data == nullptr) {
+        // load buffer
+        mission_data = new ObjectBuffer<struct AP_Scripting::scripting_mission_cmd>(mission_cmd_queue_size);
+        if (mission_data == nullptr) {
+            gcs().send_text(MAV_SEVERITY_INFO, "scripting: unable to receive mission command");
+            return;
+        }
+    }
+
+    struct scripting_mission_cmd cmd {cmd_in.p1,
+                                      cmd_in.content.scripting.p1,
+                                      cmd_in.content.scripting.p2,
+                                      cmd_in.content.scripting.p3,
+                                      AP_HAL::millis()};
+
+    mission_data->push(cmd);
 }
 
 AP_Scripting *AP_Scripting::_singleton = nullptr;

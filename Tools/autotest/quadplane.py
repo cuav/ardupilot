@@ -46,6 +46,9 @@ class AutoTestQuadPlane(AutoTest):
     def get_normal_armable_modes_list():
         return []
 
+    def vehicleinfo_key(self):
+        return 'ArduPlane'
+
     def default_frame(self):
         return "quadplane"
 
@@ -54,6 +57,10 @@ class AutoTestQuadPlane(AutoTest):
 
     def sitl_start_location(self):
         return SITL_START_LOCATION
+
+    def default_speedup(self):
+        '''QuadPlane seems to be race-free'''
+        return 100
 
     def log_name(self):
         return "QuadPlane"
@@ -67,7 +74,7 @@ class AutoTestQuadPlane(AutoTest):
         pass
 
     def defaults_filepath(self):
-        return self.model_defaults_filepath("ArduPlane", self.frame)
+        return self.model_defaults_filepath(self.frame)
 
     def is_plane(self):
         return True
@@ -105,16 +112,12 @@ class AutoTestQuadPlane(AutoTest):
             raise PreconditionFailedException("FLTMODE_CH not %d" % default_fltmode_ch)
 
         """When disarmed, motor PWM will drop to min_pwm"""
-        min_pwm = self.get_parameter("Q_THR_MIN_PWM")
+        min_pwm = self.get_parameter("Q_M_PWM_MIN")
 
         self.progress("Verify Motor1 is at min_pwm when disarmed")
         self.wait_servo_channel_value(5, min_pwm, comparator=operator.eq)
 
-        """set Q_OPTIONS bit AIRMODE"""
-        airmode_option_bit = (1 << 9)
-        self.set_parameter("Q_OPTIONS", airmode_option_bit)
-
-        armdisarm_option = 41
+        armdisarm_option = 154
         arm_ch = 8
         self.set_parameter("RC%d_OPTION" % arm_ch, armdisarm_option)
         self.progress("Configured RC%d as ARMDISARM switch" % arm_ch)
@@ -140,7 +143,7 @@ class AutoTestQuadPlane(AutoTest):
         if (spin_arm_pwm >= spin_min_pwm):
             raise PreconditionFailedException("SPIN_MIN pwm not greater than SPIN_ARM pwm")
 
-        self.start_subtest("Test auxswitch arming with Q_OPTIONS=AirMode")
+        self.start_subtest("Test auxswitch arming with AirMode Switch")
         for mode in ('QSTABILIZE', 'QACRO'):
             """verify that arming with switch results in higher PWM output"""
             self.progress("Testing %s mode" % mode)
@@ -152,7 +155,11 @@ class AutoTestQuadPlane(AutoTest):
             self.wait_servo_channel_value(5, spin_min_pwm, comparator=operator.ge)
 
             self.progress("Verify that rudder disarm is disabled")
-            if self.disarm_motors_with_rc_input():
+            try:
+                self.disarm_motors_with_rc_input()
+            except NotAchievedException:
+                pass
+            if not self.armed():
                 raise NotAchievedException("Rudder disarm not disabled")
 
             self.progress("Disarming with switch")
@@ -166,7 +173,8 @@ class AutoTestQuadPlane(AutoTest):
         ahrs_trim_x = self.get_parameter("AHRS_TRIM_X")
         self.set_parameter("AHRS_TRIM_X", math.radians(-60))
         self.wait_roll(60, 1)
-        # test all modes except QSTABILIZE, QACRO, AUTO and QAUTOTUNE
+        # test all modes except QSTABILIZE, QACRO, AUTO and QAUTOTUNE and QLAND and QRTL
+        # QRTL and QLAND aren't tested because we can't arm in that mode
         for mode in (
                 'ACRO',
                 'AUTOTUNE',
@@ -178,9 +186,7 @@ class AutoTestQuadPlane(AutoTest):
                 'GUIDED',
                 'LOITER',
                 'QHOVER',
-                'QLAND',
                 'QLOITER',
-                'QRTL',
                 'RTL',
                 'STABILIZE',
                 'TRAINING',
@@ -284,8 +290,8 @@ class AutoTestQuadPlane(AutoTest):
         self.load_mission(filename)
         if fence is not None:
             self.load_fence(fence)
-        self.mavproxy.send('wp list\n')
-        self.mavproxy.expect('Requesting [0-9]+ waypoints')
+        if self.mavproxy is not None:
+            self.mavproxy.send('wp list\n')
         self.wait_ready_to_arm()
         self.arm_vehicle()
         self.change_mode('AUTO')
@@ -544,8 +550,8 @@ class AutoTestQuadPlane(AutoTest):
             # Step 4: take off as a copter land as a plane, make sure we track
             self.progress("Flying with gyro FFT - vtol to plane")
             self.load_mission("quadplane-gyro-mission.txt")
-            self.mavproxy.send('wp list\n')
-            self.mavproxy.expect('Requesting [0-9]+ waypoints')
+            if self.mavproxy is not None:
+                self.mavproxy.send('wp list\n')
             self.change_mode('AUTO')
             self.wait_ready_to_arm()
             self.arm_vehicle()
@@ -585,10 +591,10 @@ class AutoTestQuadPlane(AutoTest):
 
     def disabled_tests(self):
         return {
-            "QAutoTune": "See https://github.com/ArduPilot/ardupilot/issues/10411",
             "FRSkyPassThrough": "Currently failing",
             "CPUFailsafe": "servo channel values not scaled like ArduPlane",
             "GyroFFT": "flapping test",
+            "ConfigErrorLoop": "failing because RC values not settable",
         }
 
     def test_pilot_yaw(self):
@@ -616,7 +622,7 @@ class AutoTestQuadPlane(AutoTest):
         # disable stall prevention so roll angle is not limited
         self.set_parameter("STALL_PREVENTION", 0)
 
-        thr_min_pwm = self.get_parameter("Q_THR_MIN_PWM")
+        thr_min_pwm = self.get_parameter("Q_M_PWM_MIN")
         lim_roll_deg = self.get_parameter("LIM_ROLL_CD") * 0.01
         self.progress("Waiting for motors to stop (transition completion)")
         self.wait_servo_channel_value(5,
@@ -660,6 +666,28 @@ class AutoTestQuadPlane(AutoTest):
         self.change_mode("RTL")
         self.wait_disarmed(timeout=300)
 
+    def tailsitter(self):
+        '''tailsitter test'''
+        self.set_parameter('Q_FRAME_CLASS', 10)
+        self.set_parameter('Q_ENABLE', 1)
+        self.set_parameter('Q_TAILSIT_ENABLE', 1)
+
+        self.reboot_sitl()
+        self.wait_ready_to_arm()
+        value_before = self.get_servo_channel_value(3)
+        self.progress("Before: %u" % value_before)
+        self.change_mode('QHOVER')
+        tstart = self.get_sim_time()
+        while True:
+            now = self.get_sim_time_cached()
+            if now - tstart > 60:
+                break
+            value_after = self.get_servo_channel_value(3)
+            self.progress("After: t=%f output=%u" % ((now - tstart), value_after))
+            if value_before != value_after:
+                raise NotAchievedException("Changed throttle output on mode change to QHOVER")
+        self.disarm_vehicle()
+
     def tests(self):
         '''return list of all tests'''
 
@@ -690,6 +718,11 @@ class AutoTestQuadPlane(AutoTest):
 
             ("GyroFFT", "Fly Gyro FFT",
              self.fly_gyro_fft),
+
+            ("Tailsitter",
+             "Test tailsitter support",
+             self.tailsitter),
+
 
             ("LogUpload",
              "Log upload",

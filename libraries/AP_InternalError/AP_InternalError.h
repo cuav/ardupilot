@@ -36,7 +36,7 @@ public:
     // note that this map is an internal ArduPilot fixture and is
     // prone to change at regular intervals.  The meanings of these
     // bits can change day-to-day.
-    enum class error_t {                           // Hex      Decimal
+    enum class error_t : uint32_t {                           // Hex      Decimal
         logger_mapfailure           = (1U <<  0),  // 0x00001  1
         logger_missing_logstructure = (1U <<  1),  // 0x00002  2
         logger_logwrite_missingfmt  = (1U <<  2),  // 0x00004  4
@@ -66,7 +66,8 @@ public:
         mem_guard                   = (1U << 26),  //0x4000000 67108864
         dma_fail                    = (1U << 27),  //0x8000000 134217728
         params_restored             = (1U << 28),  //0x10000000 268435456
-        __LAST__                    = (1U << 29),  // used only for sanity check
+        invalid_arg_or_result       = (1U << 29),  //0x20000000 536870912
+        __LAST__                    = (1U << 30),  // used only for sanity check
     };
 
     // if you've changed __LAST__ to be 32, then you will want to
@@ -81,6 +82,9 @@ public:
     // fill buffer with a description of the exceptions present in
     // internal errors.  buffer will always be null-terminated.
     void errors_as_string(uint8_t *buffer, uint16_t len) const;
+
+    // convert an error code to a string
+    void error_to_string(char *buffer, uint16_t len, error_t error_code) const;
 
     uint32_t count() const { return total_error_count; }
 

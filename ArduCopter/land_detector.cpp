@@ -61,23 +61,41 @@ void Copter::update_land_detector()
     } else {
 
 #if FRAME_CONFIG == HELI_FRAME
-        // check that collective pitch is below mid collective (zero thrust) position
-        bool motor_at_lower_limit = (motors->get_below_mid_collective() && fabsf(ahrs.get_roll()) < M_PI/2.0f);
+        // check for both manual collective modes and modes that use altitude hold. For manual collective (called throttle 
+        // because multi's use throttle), check that collective pitch is below mid collective (zero thrust) position.  For modes 
+        // that use altitude hold, check that the pilot is commanding a descent and collective is at min allowed for altitude hold modes.
+        bool motor_at_lower_limit = ((flightmode->has_manual_throttle() && motors->get_below_mid_collective() && fabsf(ahrs.get_roll()) < M_PI/2.0f) 
+                                    || (motors->limit.throttle_lower && pos_control->get_vel_desired_cms().z < 0.0f));
 #else
         // check that the average throttle output is near minimum (less than 12.5% hover throttle)
         bool motor_at_lower_limit = motors->limit.throttle_lower && attitude_control->is_throttle_mix_min();
 #endif
 
+        uint8_t land_detector_scalar = 1;
+#if LANDING_GEAR_ENABLED == ENABLED
+        if (landinggear.get_wow_state() != AP_LandingGear::LG_WOW_UNKNOWN) {
+            // we have a WoW sensor so lets loosen the strictness of the landing detector
+            land_detector_scalar = 2;
+        }
+#endif
+
         // check that the airframe is not accelerating (not falling or braking after fast forward flight)
-        bool accel_stationary = (land_accel_ef_filter.get().length() <= LAND_DETECTOR_ACCEL_MAX);
+        bool accel_stationary = (land_accel_ef_filter.get().length() <= LAND_DETECTOR_ACCEL_MAX * land_detector_scalar);
 
         // check that vertical speed is within 1m/s of zero
-        bool descent_rate_low = fabsf(inertial_nav.get_velocity_z()) < 100;
+        bool descent_rate_low = fabsf(inertial_nav.get_velocity_z()) < 100 * land_detector_scalar;
 
         // if we have a healthy rangefinder only allow landing detection below 2 meters
         bool rangefinder_check = (!rangefinder_alt_ok() || rangefinder_state.alt_cm_filt.get() < LAND_RANGEFINDER_MIN_ALT_CM);
 
-        if (motor_at_lower_limit && accel_stationary && descent_rate_low && rangefinder_check) {
+        // if we have weight on wheels (WoW) or ambiguous unknown. never no WoW
+#if LANDING_GEAR_ENABLED == ENABLED
+        const bool WoW_check = (landinggear.get_wow_state() == AP_LandingGear::LG_WOW || landinggear.get_wow_state() == AP_LandingGear::LG_WOW_UNKNOWN);
+#else
+        const bool WoW_check = true;
+#endif
+
+        if (motor_at_lower_limit && accel_stationary && descent_rate_low && rangefinder_check && WoW_check) {
             // landed criteria met - increment the counter and check if we've triggered
             if( land_detector_count < ((float)LAND_DETECTOR_TRIGGER_SEC)*scheduler.get_loop_rate_hz()) {
                 land_detector_count++;
@@ -118,7 +136,7 @@ void Copter::set_land_complete(bool b)
     
     // trigger disarm-on-land if configured
     bool disarm_on_land_configured = (g.throttle_behavior & THR_BEHAVE_DISARM_ON_LAND_DETECT) != 0;
-    const bool mode_disarms_on_land = flightmode->allows_arming(false) && !flightmode->has_manual_throttle();
+    const bool mode_disarms_on_land = flightmode->allows_arming(AP_Arming::Method::LANDING) && !flightmode->has_manual_throttle();
 
     if (ap.land_complete && motors->armed() && disarm_on_land_configured && mode_disarms_on_land) {
         arming.disarm(AP_Arming::Method::LANDED);
@@ -162,7 +180,7 @@ void Copter::update_throttle_mix()
 
         // check for aggressive flight requests - requested roll or pitch angle below 15 degrees
         const Vector3f angle_target = attitude_control->get_att_target_euler_cd();
-        bool large_angle_request = (norm(angle_target.x, angle_target.y) > LAND_CHECK_LARGE_ANGLE_CD);
+        bool large_angle_request = angle_target.xy().length() > LAND_CHECK_LARGE_ANGLE_CD;
 
         // check for large external disturbance - angle error over 30 degrees
         const float angle_error = attitude_control->get_att_error_angle_deg();
@@ -171,8 +189,8 @@ void Copter::update_throttle_mix()
         // check for large acceleration - falling or high turbulence
         const bool accel_moving = (land_accel_ef_filter.get().length() > LAND_CHECK_ACCEL_MOVING);
 
-        // check for requested decent
-        bool descent_not_demanded = pos_control->get_desired_velocity().z >= 0.0f;
+        // check for requested descent
+        bool descent_not_demanded = pos_control->get_vel_desired_cms().z >= 0.0f;
 
         // check if landing
         const bool landing = flightmode->is_landing();

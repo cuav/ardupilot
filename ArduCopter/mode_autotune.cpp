@@ -8,26 +8,8 @@
 
 bool AutoTune::init()
 {
-    // use position hold while tuning if we were in QLOITER
-    bool position_hold = (copter.control_mode == Mode::Number::LOITER || copter.control_mode == Mode::Number::POSHOLD);
-
-    return init_internals(position_hold,
-                          copter.attitude_control,
-                          copter.pos_control,
-                          copter.ahrs_view,
-                          &copter.inertial_nav);
-}
-
-/*
-  start autotune mode
- */
-bool AutoTune::start()
-{
-    // only allow flip from Stabilize, AltHold,  PosHold or Loiter modes
-    if (copter.control_mode != Mode::Number::STABILIZE &&
-        copter.control_mode != Mode::Number::ALT_HOLD &&
-        copter.control_mode != Mode::Number::LOITER &&
-        copter.control_mode != Mode::Number::POSHOLD) {
+    // only allow AutoTune from some flight modes, for example Stabilize, AltHold,  PosHold or Loiter modes
+    if (!copter.flightmode->allows_autotune()) {
         return false;
     }
 
@@ -41,7 +23,14 @@ bool AutoTune::start()
         return false;
     }
 
-    return AC_AutoTune::start();
+    // use position hold while tuning if we were in QLOITER
+    bool position_hold = (copter.flightmode->mode_number() == Mode::Number::LOITER || copter.flightmode->mode_number() == Mode::Number::POSHOLD);
+
+    return init_internals(position_hold,
+                          copter.attitude_control,
+                          copter.pos_control,
+                          copter.ahrs_view,
+                          &copter.inertial_nav);
 }
 
 void AutoTune::run()
@@ -61,13 +50,13 @@ void AutoTune::run()
             copter.motors->set_desired_spool_state(AP_Motors::DesiredSpoolState::THROTTLE_UNLIMITED);
         }
         copter.attitude_control->reset_rate_controller_I_terms_smoothly();
-        copter.attitude_control->set_yaw_target_to_current_heading();
+        copter.attitude_control->reset_yaw_target_and_rate();
 
         float target_roll, target_pitch, target_yaw_rate;
         get_pilot_desired_rp_yrate_cd(target_roll, target_pitch, target_yaw_rate);
 
         copter.attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(target_roll, target_pitch, target_yaw_rate);
-        copter.pos_control->relax_alt_hold_controllers(0.0f);
+        copter.pos_control->relax_z_controller(0.0f);
         copter.pos_control->update_z_controller();
     } else {
         // run autotune mode
@@ -95,8 +84,8 @@ float AutoTune::get_pilot_desired_climb_rate_cms(void) const
 void AutoTune::get_pilot_desired_rp_yrate_cd(float &des_roll_cd, float &des_pitch_cd, float &yaw_rate_cds)
 {
     copter.mode_autotune.get_pilot_desired_lean_angles(des_roll_cd, des_pitch_cd, copter.aparm.angle_max,
-                                                       copter.attitude_control->get_althold_lean_angle_max());
-    yaw_rate_cds = copter.mode_autotune.get_pilot_desired_yaw_rate(copter.channel_yaw->get_control_in());
+                                                       copter.attitude_control->get_althold_lean_angle_max_cd());
+    yaw_rate_cds = copter.mode_autotune.get_pilot_desired_yaw_rate(copter.channel_yaw->norm_input_dz());
 }
 
 /*
@@ -104,8 +93,9 @@ void AutoTune::get_pilot_desired_rp_yrate_cd(float &des_roll_cd, float &des_pitc
  */
 void AutoTune::init_z_limits()
 {
-    copter.pos_control->set_max_speed_z(-copter.get_pilot_speed_dn(), copter.g.pilot_speed_up);
-    copter.pos_control->set_max_accel_z(copter.g.pilot_accel_z);
+    // set vertical speed and acceleration limits
+    copter.pos_control->set_max_speed_accel_z(-copter.get_pilot_speed_dn(), copter.g.pilot_speed_up, copter.g.pilot_accel_z);
+    copter.pos_control->set_correction_speed_accel_z(-copter.get_pilot_speed_dn(), copter.g.pilot_speed_up, copter.g.pilot_accel_z);
 }
 
 void AutoTune::log_pids()
@@ -128,28 +118,27 @@ bool AutoTune::position_ok()
 */
 bool ModeAutoTune::init(bool ignore_checks)
 {
-    return copter.autotune.init();
+    return autotune.init();
 }
-
 
 void ModeAutoTune::run()
 {
-    copter.autotune.run();
+    autotune.run();
 }
 
 void ModeAutoTune::save_tuning_gains()
 {
-    copter.autotune.save_tuning_gains();
+    autotune.save_tuning_gains();
 }
 
-void ModeAutoTune::stop()
+void ModeAutoTune::exit()
 {
-    copter.autotune.stop();
+    autotune.stop();
 }
 
 void ModeAutoTune::reset()
 {
-    copter.autotune.reset();
+    autotune.reset();
 }
 
 #endif  // AUTOTUNE_ENABLED == ENABLED

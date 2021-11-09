@@ -8,7 +8,12 @@
 #include <AP_Notify/AP_Notify.h>
 #include <AP_RangeFinder/AP_RangeFinder.h>
 #include <AP_RPM/AP_RPM.h>
+#include <AP_Terrain/AP_Terrain.h>
+#include <AC_Fence/AC_Fence.h>
 #include <GCS_MAVLink/GCS.h>
+#if APM_BUILD_TYPE(APM_BUILD_Rover)
+#include <AP_WindVane/AP_WindVane.h>
+#endif
 
 #if HAL_WITH_FRSKY_TELEM_BIDIRECTIONAL
 #include "AP_Frsky_MAVlite.h"
@@ -42,6 +47,10 @@ for FrSky SPort Passthrough
 #define AP_ARMED_OFFSET             8
 #define AP_BATT_FS_OFFSET           9
 #define AP_EKF_FS_OFFSET            10
+#define AP_FS_OFFSET                12
+#define AP_FENCE_PRESENT_OFFSET     13
+#define AP_FENCE_BREACH_OFFSET      14
+#define AP_THROTTLE_OFFSET          19
 #define AP_IMU_TEMP_MIN             19.0f
 #define AP_IMU_TEMP_MAX             82.0f
 #define AP_IMU_TEMP_OFFSET          26
@@ -53,11 +62,19 @@ for FrSky SPort Passthrough
 #define VELANDYAW_XYVEL_OFFSET      9
 #define VELANDYAW_YAW_LIMIT         0x7FF
 #define VELANDYAW_YAW_OFFSET        17
+#define VELANDYAW_ARSPD_OFFSET      28
 // for attitude (roll, pitch) and range data
 #define ATTIANDRNG_ROLL_LIMIT       0x7FF
 #define ATTIANDRNG_PITCH_LIMIT      0x3FF
 #define ATTIANDRNG_PITCH_OFFSET     11
 #define ATTIANDRNG_RNGFND_OFFSET    21
+// for terrain data
+#define TERRAIN_UNHEALTHY_OFFSET    13
+// for wind data
+#define WIND_ANGLE_LIMIT            0x7F
+#define WIND_SPEED_OFFSET           7
+#define WIND_APPARENT_ANGLE_OFFSET  15
+#define WIND_APPARENT_SPEED_OFFSET  23
 
 extern const AP_HAL::HAL& hal;
 
@@ -112,7 +129,12 @@ void AP_Frsky_SPort_Passthrough::setup_wfq_scheduler(void)
     set_scheduler_entry(BATT_1, 1300, 500);     // 0x5003 Battery 1 status
     set_scheduler_entry(PARAM, 1700, 1000);     // 0x5007 parameters
     set_scheduler_entry(RPM, 300, 330);         // 0x500A rpm sensors 1 and 2
+    set_scheduler_entry(TERRAIN, 700, 500);     // 0x500B terrain data
+    set_scheduler_entry(WIND, 700, 500);        // 0x500C wind data
     set_scheduler_entry(UDATA, 5000, 200);      // user data
+
+    // initialize default sport sensor ID
+    set_sensor_id(_frsky_parameters->_dnlink_id, downlink_sensor_id);
 #if HAL_WITH_FRSKY_TELEM_BIDIRECTIONAL
     set_scheduler_entry(MAV, 35, 25);           // mavlite
     // initialize sport sensor IDs
@@ -181,8 +203,8 @@ bool AP_Frsky_SPort_Passthrough::is_packet_ready(uint8_t idx, bool queue_empty)
         break;
     case GPS_LAT:
     case GPS_LON:
-        // force gps coords to use sensor 0x1B, always send when used with external data
-        packet_ready = _use_external_data || (_passthrough.new_byte == SENSOR_ID_27);
+        // force gps coords to use default sensor ID, always send when used with external data
+        packet_ready = _use_external_data || (_passthrough.new_byte == downlink_sensor_id);
         break;
     case AP_STATUS:
         packet_ready = gcs().vehicle_initialised();
@@ -199,6 +221,32 @@ bool AP_Frsky_SPort_Passthrough::is_packet_ready(uint8_t idx, bool queue_empty)
             }
             packet_ready = rpm->num_sensors() > 0;
         }
+        break;
+    case TERRAIN:
+        {
+            packet_ready = false;
+#if AP_TERRAIN_AVAILABLE
+            const AP_Terrain *terrain = AP::terrain();
+            packet_ready = terrain && terrain->enabled();
+#endif
+        }
+        break;
+    case WIND:
+#if !APM_BUILD_TYPE(APM_BUILD_Rover)
+    {
+        float a;
+        WITH_SEMAPHORE(AP::ahrs().get_semaphore());
+        if (AP::ahrs().airspeed_estimate_true(a)) {
+            // if we have an airspeed estimate then we have a valid wind estimate
+            packet_ready = true;
+        }
+    }
+#else
+    {
+        const AP_WindVane* windvane = AP_WindVane::get_singleton();
+        packet_ready = windvane != nullptr && windvane->enabled();
+    }
+#endif
         break;
     case UDATA:
         // when using fport user data is sent by scheduler
@@ -268,6 +316,12 @@ void AP_Frsky_SPort_Passthrough::process_packet(uint8_t idx)
         break;
     case RPM: // 0x500A rpm sensors 1 and 2
         send_sport_frame(SPORT_DATA_FRAME, DIY_FIRST_ID+0x0A, calc_rpm());
+        break;
+    case TERRAIN: // 0x500B terrain data
+        send_sport_frame(SPORT_DATA_FRAME, DIY_FIRST_ID+0x0B, calc_terrain());
+        break;
+    case WIND: // 0x500C terrain data
+        send_sport_frame(SPORT_DATA_FRAME, DIY_FIRST_ID+0x0C, calc_wind());
         break;
     case UDATA: // user data
         {
@@ -393,35 +447,35 @@ bool AP_Frsky_SPort_Passthrough::get_next_msg_chunk(void)
  */
 uint32_t AP_Frsky_SPort_Passthrough::calc_param(void)
 {
-    const AP_BattMonitor &_battery = AP::battery();
+    uint8_t param_id = _paramID;    //cache it because it gets changed inside the switch
+    uint32_t param_value = 0;
 
-    uint32_t param = 0;
-    uint8_t last_param = AP::battery().num_instances() > 1 ? BATT_CAPACITY_2 : BATT_CAPACITY_1;
-
-    // cycle through paramIDs
-    if (_paramID >= last_param) {
-        _paramID = 0;
-    }
-
-    _paramID++;
     switch (_paramID) {
+    case NONE:
     case FRAME_TYPE:
-        param = gcs().frame_type(); // see MAV_TYPE in Mavlink definition file common.h
+        param_value = gcs().frame_type(); // see MAV_TYPE in Mavlink definition file common.h
+        _paramID = BATT_CAPACITY_1;
         break;
-    case BATT_FS_VOLTAGE:           // was used to send the battery failsafe voltage, lend slot to next param
-    case BATT_FS_CAPACITY:          // was used to send the battery failsafe capacity in mAh, lend slot to next param
     case BATT_CAPACITY_1:
-        _paramID = 4;
-        param = (uint32_t)roundf(_battery.pack_capacity_mah(0)); // battery pack capacity in mAh
+        param_value = (uint32_t)roundf(AP::battery().pack_capacity_mah(0)); // battery pack capacity in mAh
+        _paramID = AP::battery().num_instances() > 1 ? BATT_CAPACITY_2 : TELEMETRY_FEATURES;
         break;
     case BATT_CAPACITY_2:
-        param = (uint32_t)roundf(_battery.pack_capacity_mah(1)); // battery pack capacity in mAh
+        param_value = (uint32_t)roundf(AP::battery().pack_capacity_mah(1)); // battery pack capacity in mAh
+        _paramID = TELEMETRY_FEATURES;
+        break;
+    case TELEMETRY_FEATURES:
+#if HAL_WITH_FRSKY_TELEM_BIDIRECTIONAL
+        BIT_SET(param_value,PassthroughFeatures::BIDIR);
+#endif
+#ifdef ENABLE_SCRIPTING
+        BIT_SET(param_value,PassthroughFeatures::SCRIPTING);
+#endif
+        _paramID = FRAME_TYPE;
         break;
     }
     //Reserve first 8 bits for param ID, use other 24 bits to store parameter value
-    param = (_paramID << PARAM_ID_OFFSET) | (param & PARAM_VALUE_LIMIT);
-
-    return param;
+    return (param_id << PARAM_ID_OFFSET) | (param_value & PARAM_VALUE_LIMIT);
 }
 
 /*
@@ -482,7 +536,7 @@ bool AP_Frsky_SPort_Passthrough::is_passthrough_byte(const uint8_t byte) const
         return true;
     }
 #endif
-    return byte == SENSOR_ID_27;
+    return byte == downlink_sensor_id;
 }
 
 /*
@@ -492,7 +546,10 @@ bool AP_Frsky_SPort_Passthrough::is_passthrough_byte(const uint8_t byte) const
 uint32_t AP_Frsky_SPort_Passthrough::calc_ap_status(void)
 {
     // IMU temperature: offset -19, 0 means temp =< 19°, 63 means temp => 82°
-    uint8_t imu_temp = (uint8_t) roundf(constrain_float(AP::ins().get_temperature(0), AP_IMU_TEMP_MIN, AP_IMU_TEMP_MAX) - AP_IMU_TEMP_MIN);
+    uint8_t imu_temp = 0;
+#if HAL_INS_ENABLED
+    imu_temp = (uint8_t) roundf(constrain_float(AP::ins().get_temperature(0), AP_IMU_TEMP_MIN, AP_IMU_TEMP_MAX) - AP_IMU_TEMP_MIN);
+#endif
 
     // control/flight mode number (limit to 31 (0x1F) since the value is stored on 5 bits)
     uint32_t ap_status = (uint8_t)((gcs().custom_mode()+1) & AP_CONTROL_MODE_LIMIT);
@@ -507,6 +564,16 @@ uint32_t AP_Frsky_SPort_Passthrough::calc_ap_status(void)
     ap_status |= (uint8_t)(AP_Notify::flags.failsafe_battery)<<AP_BATT_FS_OFFSET;
     // bad ekf flag
     ap_status |= (uint8_t)(AP_Notify::flags.ekf_bad)<<AP_EKF_FS_OFFSET;
+    // generic failsafe
+    ap_status |= (uint8_t)(AP_Notify::flags.failsafe_battery||AP_Notify::flags.failsafe_ekf||AP_Notify::flags.failsafe_gcs||AP_Notify::flags.failsafe_radio)<<AP_FS_OFFSET;
+    // fence status
+    AC_Fence *fence = AP::fence();
+    if (fence != nullptr) {
+        ap_status |= (uint8_t)(fence->enabled() && fence->present()) << AP_FENCE_PRESENT_OFFSET;
+        ap_status |= (uint8_t)(fence->get_breaches()>0) << AP_FENCE_BREACH_OFFSET;
+    }
+    // signed throttle [-100,100] scaled down to [-63,63] on 7 bits, MSB for sign + 6 bits for 0-63
+    ap_status |= prep_number(gcs().get_hud_throttle()*0.63, 2, 0)<<AP_THROTTLE_OFFSET;
     // IMU temperature
     ap_status |= imu_temp << AP_IMU_TEMP_OFFSET;
     return ap_status;
@@ -560,17 +627,31 @@ uint32_t AP_Frsky_SPort_Passthrough::calc_velandyaw(void)
     float vspd = get_vspeed_ms();
     // vertical velocity in dm/s
     uint32_t velandyaw = prep_number(roundf(vspd * 10), 2, 1);
+    float airspeed_m;       // m/s
+    float hspeed_m;         // m/s
+    bool airspeed_estimate_true;
     AP_AHRS &_ahrs = AP::ahrs();
-    WITH_SEMAPHORE(_ahrs.get_semaphore());
-    // horizontal velocity in dm/s (use airspeed if available and enabled - even if not used - otherwise use groundspeed)
-    const AP_Airspeed *aspeed = AP::airspeed();
-    if (aspeed && aspeed->enabled()) {
-        velandyaw |= prep_number(roundf(aspeed->get_airspeed() * 10), 2, 1)<<VELANDYAW_XYVEL_OFFSET;
-    } else { // otherwise send groundspeed estimate from ahrs
-        velandyaw |= prep_number(roundf(_ahrs.groundspeed() * 10), 2, 1)<<VELANDYAW_XYVEL_OFFSET;
+    {
+        WITH_SEMAPHORE(_ahrs.get_semaphore());
+        hspeed_m = _ahrs.groundspeed(); // default is to use groundspeed
+        airspeed_estimate_true = AP::ahrs().airspeed_estimate_true(airspeed_m);
     }
+    bool option_airspeed_enabled = (_frsky_parameters->_options & frsky_options_e::OPTION_AIRSPEED_AND_GROUNDSPEED) != 0;
+    // airspeed estimate + airspeed option disabled (default) => send airspeed (we give priority to airspeed over groundspeed)
+    // airspeed estimate + airspeed option enabled => alternate airspeed/groundspeed, i.e send airspeed only when _passthrough.send_airspeed==true
+    if (airspeed_estimate_true && (!option_airspeed_enabled || _passthrough.send_airspeed)) {
+        hspeed_m = airspeed_m;
+    }
+    // horizontal velocity in dm/s
+    velandyaw |= prep_number(roundf(hspeed_m * 10), 2, 1)<<VELANDYAW_XYVEL_OFFSET;
     // yaw from [0;36000] centidegrees to .2 degree increments [0;1800] (just in case, limit to 2047 (0x7FF) since the value is stored on 11 bits)
     velandyaw |= ((uint16_t)roundf(_ahrs.yaw_sensor * 0.05f) & VELANDYAW_YAW_LIMIT)<<VELANDYAW_YAW_OFFSET;
+    // flag the airspeed bit if required
+    if (airspeed_estimate_true && option_airspeed_enabled && _passthrough.send_airspeed) {
+        velandyaw |= 1U<<VELANDYAW_ARSPD_OFFSET;
+    }
+    // toggle air/ground speed selector
+    _passthrough.send_airspeed = !_passthrough.send_airspeed;
     return velandyaw;
 }
 
@@ -613,6 +694,64 @@ uint32_t AP_Frsky_SPort_Passthrough::calc_rpm(void)
     if (ap_rpm->get_rpm(1,rpm)) {
         value |= (int16_t)roundf(rpm * 0.1) << 16;
     }
+    return value;
+}
+
+/*
+ * prepare terrain data
+ * for FrSky SPort Passthrough (OpenTX) protocol (X-receivers)
+ */
+uint32_t AP_Frsky_SPort_Passthrough::calc_terrain(void)
+{
+    uint32_t value = 0;
+#if AP_TERRAIN_AVAILABLE
+    AP_Terrain *terrain = AP::terrain();
+    if (terrain == nullptr || !terrain->enabled()) {
+        return value;
+    }
+    float height_above_terrain;
+    if (terrain->height_above_terrain(height_above_terrain, true)) {
+        // vehicle height above terrain
+        value |= prep_number(roundf(height_above_terrain * 10), 3, 2);
+    }
+    // terrain unhealthy flag
+    value |= (uint8_t)(terrain->status() == AP_Terrain::TerrainStatus::TerrainStatusUnhealthy) << TERRAIN_UNHEALTHY_OFFSET;
+#endif
+    return value;
+}
+
+/*
+ * prepare wind data
+ * for FrSky SPort Passthrough (OpenTX) protocol (X-receivers)
+ * wind direction = 0 means North
+ */
+uint32_t AP_Frsky_SPort_Passthrough::calc_wind(void)
+{
+#if !APM_BUILD_TYPE(APM_BUILD_Rover)
+    Vector3f v;
+    {
+        AP_AHRS &ahrs = AP::ahrs();
+        WITH_SEMAPHORE(ahrs.get_semaphore());
+        v = ahrs.wind_estimate();
+    }
+    // wind angle in 3 degree increments 0,360 (unsigned)
+    uint32_t value = prep_number(roundf(wrap_360(degrees(atan2f(-v.y, -v.x))) * (1.0f/3.0f)), 2, 0);
+    // wind speed in dm/s
+    value |= prep_number(roundf(v.length() * 10), 2, 1) << WIND_SPEED_OFFSET;
+#else
+    const AP_WindVane* windvane = AP_WindVane::get_singleton();
+    uint32_t value = 0;
+    if (windvane != nullptr && windvane->enabled()) {
+        // true wind angle in 3 degree increments 0,360 (unsigned)
+        value = prep_number(roundf(wrap_360(degrees(windvane->get_true_wind_direction_rad())) * (1.0f/3.0f)), 2, 0);
+        // true wind speed in dm/s
+        value |= prep_number(roundf(windvane->get_true_wind_speed() * 10), 2, 1) << WIND_SPEED_OFFSET;
+        // apparent wind angle in 3 degree increments -180,180 (signed)
+        value |= prep_number(roundf(degrees(windvane->get_apparent_wind_direction_rad()) * (1.0f/3.0f)), 2, 0);
+        // apparent wind speed in dm/s
+        value |= prep_number(roundf(windvane->get_apparent_wind_speed() * 10), 2, 1) << WIND_APPARENT_SPEED_OFFSET;
+    }
+#endif
     return value;
 }
 

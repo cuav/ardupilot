@@ -72,6 +72,8 @@ public:
 #if HAL_WITH_FRSKY_TELEM_BIDIRECTIONAL
         MAV =           13,  // mavlite
 #endif //HAL_WITH_FRSKY_TELEM_BIDIRECTIONAL
+        TERRAIN =       14, // 0x500B terrain data
+        WIND =          15, // 0x500C wind data
         WFQ_LAST_ITEM       // must be last
     };
 
@@ -84,11 +86,18 @@ private:
     AP_Frsky_Parameters *&_frsky_parameters;
 
     enum PassthroughParam : uint8_t {
+        NONE =                0,
         FRAME_TYPE =          1,
         BATT_FS_VOLTAGE =     2,
         BATT_FS_CAPACITY =    3,
         BATT_CAPACITY_1 =     4,
-        BATT_CAPACITY_2 =     5
+        BATT_CAPACITY_2 =     5,
+        TELEMETRY_FEATURES =  6
+    };
+
+    enum PassthroughFeatures : uint8_t {
+        BIDIR =                 0,
+        SCRIPTING =             1,
     };
 
     // methods to convert flight controller data to FrSky SPort Passthrough (OpenTX) format
@@ -99,6 +108,8 @@ private:
     uint32_t calc_velandyaw(void);
     uint32_t calc_attiandrng(void);
     uint32_t calc_rpm(void);
+    uint32_t calc_terrain(void);
+    uint32_t calc_wind(void);
 
     // use_external_data is set when this library will
     // be providing data to another transport, such as FPort
@@ -115,6 +126,8 @@ private:
         uint8_t char_index; // index of which character to get in the message
     } _msg_chunk;
 
+    // passthrough default sensor id
+    uint8_t downlink_sensor_id = 0x1B;
 
 #if HAL_WITH_FRSKY_TELEM_BIDIRECTIONAL
     // bidirectional sport telemetry

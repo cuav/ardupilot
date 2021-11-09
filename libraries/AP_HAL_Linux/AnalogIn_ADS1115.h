@@ -11,7 +11,7 @@ public:
     AnalogSource_ADS1115(int16_t pin);
     float read_average() override;
     float read_latest() override;
-    void set_pin(uint8_t p) override;
+    bool set_pin(uint8_t p) override;
     float voltage_average() override;
     float voltage_latest() override;
     float voltage_average_ratiometric() override;
@@ -37,4 +37,5 @@ private:
     AP_ADC_ADS1115 *_adc;
     AnalogSource_ADS1115 *_channels[ADS1115_ADC_MAX_CHANNELS];
     uint32_t _last_update_timestamp;
+    HAL_Semaphore _semaphore;
 };

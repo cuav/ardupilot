@@ -25,6 +25,7 @@ import socket
 import struct
 import random
 import threading
+import enum
 
 from MAVProxy.modules.lib import mp_util
 
@@ -32,6 +33,7 @@ from pymavlink import mavparm
 from pymavlink import mavwp, mavutil, DFReader
 from pymavlink import mavextra
 from pymavlink.rotmat import Vector3
+from pymavlink import quaternion
 
 from pysim import util, vehicleinfo
 
@@ -40,18 +42,24 @@ try:
 except ImportError:
     import Queue
 
-MAVLINK_SET_POS_TYPE_MASK_POS_IGNORE = (mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE |
-                                        mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE |
-                                        mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE)
-MAVLINK_SET_POS_TYPE_MASK_VEL_IGNORE = (mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE |
-                                        mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE |
-                                        mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE)
-MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE = (mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE |
-                                        mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE |
-                                        mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE)
-MAVLINK_SET_POS_TYPE_MASK_FORCE = mavutil.mavlink.POSITION_TARGET_TYPEMASK_FORCE_SET
-MAVLINK_SET_POS_TYPE_MASK_YAW_IGNORE = mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
-MAVLINK_SET_POS_TYPE_MASK_YAW_RATE_IGNORE = mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+
+# Enumeration convenience class for mavlink POSITION_TARGET_TYPEMASK
+class MAV_POS_TARGET_TYPE_MASK(enum.IntEnum):
+    POS_IGNORE = (mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE |
+                  mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE |
+                  mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE)
+    VEL_IGNORE = (mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE |
+                  mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE |
+                  mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE)
+    ACC_IGNORE = (mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE |
+                  mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE |
+                  mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE)
+    FORCE_SET  = mavutil.mavlink.POSITION_TARGET_TYPEMASK_FORCE_SET
+    YAW_IGNORE = mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
+    YAW_RATE_IGNORE = mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+    POS_ONLY   = VEL_IGNORE | ACC_IGNORE | YAW_IGNORE | YAW_RATE_IGNORE
+    LAST_BYTE  = 0xF000
+
 
 MAV_FRAMES_TO_TEST = [
     mavutil.mavlink.MAV_FRAME_GLOBAL,
@@ -868,21 +876,20 @@ class FRSkySPort(FRSky):
             0x5003: "Battery 1 status",
             0x5007: "parameters",
             0x500A: "rpm",
+            0x500B: "terrain",
+            0x500C: "wind",
 
             # SPort non-passthrough:
-            0x01: "GPS_ALT_BP",
-            0x02: "Temp1",
-            0x04: "Fuel",
-            0x05: "Temp2",
-            0x09: "GPS_ALT_AP",
-            0x10: "BARO_ALT_BP",
-            0x11: "GPS_ALT_AP",
-            0x14: "HDG",
-            0x19: "GPS_SPEED_AP",
-            0x21: "BARO_ALT_AP",
-            0x28: "CURR",
-            0x30: "VARIO",
-            0x39: "VFAS",
+            0x082F: "GALT", # gps altitude integer cm
+            0x040F: "TMP1", # Tmp1
+            0x060F: "Fuel", # fuel % 0-100
+            0x041F: "TMP2", # Tmp2
+            0x010F: "ALT",  # baro alt cm
+            0x083F: "GSPD", # gps speed integer mm/s
+            0x084F: "HDG",  # yaw in cd
+            0x020F: "CURR", # current dA
+            0x011F: "VSPD", # vertical speed cm/s
+            0x021F: "VFAS", # battery 1 voltage cV
             # 0x800: "GPS", ## comments as duplicated dictrionary key
             0x050E: "RPM1",
 
@@ -967,8 +974,8 @@ class FRSkySPort(FRSky):
         return ret
 
     def check_poll(self):
-        self.progress("check poll")
         now = self.get_time()
+        # self.progress("check poll (%u)" % now)
 
         # sometimes ArduPilot will not respond to a poll - for
         # example, if you poll an unhealthy RPM sensor then we will
@@ -1198,7 +1205,8 @@ class AutoTest(ABC):
                  binary,
                  valgrind=False,
                  gdb=False,
-                 speedup=8,
+                 gdb_no_tui=False,
+                 speedup=None,
                  frame=None,
                  params=None,
                  gdbserver=False,
@@ -1210,7 +1218,10 @@ class AutoTest(ABC):
                  _show_test_timings=False,
                  logs_dir=None,
                  force_ahrs_type=None,
-                 sup_binary=None):
+                 replay=False,
+                 sup_binaries=[],
+                 reset_after_every_test=False,
+                 sitl_32bit=False):
 
         self.start_time = time.time()
         global __autotest__ # FIXME; make progress a non-staticmethod
@@ -1222,6 +1233,7 @@ class AutoTest(ABC):
         self.binary = binary
         self.valgrind = valgrind
         self.gdb = gdb
+        self.gdb_no_tui = gdb_no_tui
         self.lldb = lldb
         self.frame = frame
         self.params = params
@@ -1229,9 +1241,14 @@ class AutoTest(ABC):
         self.breakpoints = breakpoints
         self.disable_breakpoints = disable_breakpoints
         self.speedup = speedup
-        self.sup_binary = sup_binary
+        if self.speedup is None:
+            self.speedup = self.default_speedup()
+        self.sup_binaries = sup_binaries
+        self.reset_after_every_test = reset_after_every_test
+        self.sitl_32bit = sitl_32bit
 
         self.mavproxy = None
+        self._mavproxy = None  # for auto-cleanup on failed tests
         self.mav = None
         self.viewerip = viewerip
         self.use_map = use_map
@@ -1250,6 +1267,7 @@ class AutoTest(ABC):
         self.total_waiting_to_arm_time = 0
         self.waiting_to_arm_count = 0
         self.force_ahrs_type = force_ahrs_type
+        self.replay = replay
         if self.force_ahrs_type is not None:
             self.force_ahrs_type = int(self.force_ahrs_type)
         self.logs_dir = logs_dir
@@ -1266,12 +1284,20 @@ class AutoTest(ABC):
 
         self.expect_list = []
 
+        self.start_mavproxy_count = 0
+
+        self.last_sim_time_cached = 0
+        self.last_sim_time_cached_wallclock = 0
+
     def __del__(self):
         if self.rc_thread is not None:
-            self.progress("Joining thread in __del__")
+            self.progress("Joining RC thread in __del__")
             self.rc_thread_should_quit = True
             self.rc_thread.join()
             self.rc_thread = None
+
+    def default_speedup(self):
+        return 8
 
     def progress(self, text, send_statustext=True):
         """Display autotest progress text."""
@@ -1281,6 +1307,7 @@ class AutoTest(ABC):
         print(formatted_text)
         if (send_statustext and
                 self.mav is not None and
+                self.mav.port is not None and
                 self.last_progress_sent_as_statustext != text):
             self.send_statustext(formatted_text)
             self.last_progress_sent_as_statustext = text
@@ -1340,7 +1367,6 @@ class AutoTest(ABC):
         ret = [
             '--sitl=127.0.0.1:5502',
             '--streamrate=%u' % self.sitl_streamrate(),
-            '--cmd="set heartbeat %u"' % self.speedup,
             '--target-system=%u' % self.sysid_thismav(),
             '--target-component=1',
         ]
@@ -1359,7 +1385,8 @@ class AutoTest(ABC):
             return self.repeatedly_apply_parameter_file_mavproxy(filepath)
         parameters = mavparm.MAVParmDict()
 #        correct_parameters = set()
-        parameters.load(filepath)
+        if not parameters.load(filepath):
+            raise ValueError("Param load failed")
         param_dict = {}
         for p in parameters.keys():
             param_dict[p] = parameters[p]
@@ -1384,18 +1411,9 @@ class AutoTest(ABC):
         self.progress("Applying default parameters file")
         # setup test parameters
         if self.params is None:
-            self.params = self.model_defaults_filepath(self.vehicleinfo_key(),
-                                                       self.frame)
+            self.params = self.model_defaults_filepath(self.frame)
         for x in self.params:
             self.repeatedly_apply_parameter_file(os.path.join(testdir, x))
-        self.set_parameter('LOG_DISARMED', 1)
-        if self.force_ahrs_type is not None:
-            if self.force_ahrs_type == 2:
-                self.set_parameter("EK2_ENABLE", 1)
-            if self.force_ahrs_type == 3:
-                self.set_parameter("EK3_ENABLE", 1)
-            self.set_parameter("AHRS_EKF_TYPE", self.force_ahrs_type)
-        self.reboot_sitl()
 
     def count_lines_in_filepath(self, filepath):
         return len([i for i in open(filepath)])
@@ -1417,11 +1435,11 @@ class AutoTest(ABC):
             count += 2 # file doesn't include return point + closing point
         return count
 
-    def load_fence_using_mavproxy(self, filename):
+    def load_fence_using_mavproxy(self, mavproxy, filename):
         self.set_parameter("FENCE_TOTAL", 0)
         filepath = os.path.join(testdir, self.current_test_name_directory, filename)
         count = self.count_expected_fence_lines_in_filepath(filepath)
-        self.mavproxy.send('fence load %s\n' % filepath)
+        mavproxy.send('fence load %s\n' % filepath)
 #        self.mavproxy.expect("Loaded %u (geo-)?fence" % count)
         tstart = self.get_sim_time_cached()
         while True:
@@ -1570,6 +1588,16 @@ class AutoTest(ABC):
 
     def reboot_sitl_mav(self, required_bootcount=None):
         """Reboot SITL instance using mavlink and wait for it to reconnect."""
+        # we must make sure that stats have been reset - otherwise
+        # when we reboot we'll reset statistics again and lose our
+        # STAT_BOOTCNT increment:
+        tstart = time.time()
+        while True:
+            if time.time() - tstart > 30:
+                raise NotAchievedException("STAT_RESET did not go non-zero")
+            if self.get_parameter('STAT_RESET', timeout_in_wallclock=True) != 0:
+                break
+
         old_bootcount = self.get_parameter('STAT_BOOTCNT')
         # ardupilot SITL may actually NAK the reboot; replace with
         # run_cmd when we don't do that.
@@ -1652,7 +1680,7 @@ class AutoTest(ABC):
         self.progress("Calling initialise-after-reboot")
         self.initialise_after_reboot_sitl()
 
-    def set_streamrate(self, streamrate, timeout=20):
+    def set_streamrate(self, streamrate, timeout=20, stream=mavutil.mavlink.MAV_DATA_STREAM_ALL):
         '''set MAV_DATA_STREAM_ALL; timeout is wallclock time'''
         tstart = time.time()
         while True:
@@ -1661,7 +1689,7 @@ class AutoTest(ABC):
             self.mav.mav.request_data_stream_send(
                 1,
                 1,
-                mavutil.mavlink.MAV_DATA_STREAM_ALL,
+                stream,
                 streamrate,
                 1)
             m = self.mav.recv_match(type='SYSTEM_TIME',
@@ -1806,6 +1834,8 @@ class AutoTest(ABC):
             for f in files:
                 if f == 'LogStructure.h':
                     ret.append(os.path.join(root, f))
+                if f == 'LogStructure_SBP.h':
+                    ret.append(os.path.join(root, f))
         return ret
 
     def all_log_format_ids(self):
@@ -1833,15 +1863,14 @@ class AutoTest(ABC):
                 # blank line
                 continue
             if state == state_outside:
-                if ("#define LOG_BASE_STRUCTURES" in line or
+                if ("#define LOG_COMMON_STRUCTURES" in line or
                         re.match("#define LOG_STRUCTURE_FROM_.*", line)):
                     #                    self.progress("Moving inside")
                     state = state_inside
                 continue
             if state == state_inside:
                 if linestate == linestate_none:
-                    allowed_list = ['LOG_SBP_STRUCTURES',
-                                    'LOG_STRUCTURE_FROM_']
+                    allowed_list = ['LOG_STRUCTURE_FROM_']
 
                     allowed = False
                     for a in allowed_list:
@@ -1899,6 +1928,8 @@ class AutoTest(ABC):
                     state = state_outside
                     break
                 if linestate == linestate_none:
+                    if "#if HAL_QUADPLANE_ENABLED" in line:
+                        continue
                     if "#if FRAME_CONFIG == HELI_FRAME" in line:
                         continue
                     if "#if PRECISION_LANDING == ENABLED" in line:
@@ -1934,7 +1965,7 @@ class AutoTest(ABC):
         for message_info in message_infos:
             for define in defines:
                 message_info = re.sub(define, defines[define], message_info)
-            m = re.match(r'\s*LOG_\w+\s*,\s*sizeof\([^)]+\)\s*,\s*"(\w+)"\s*,\s*"(\w+)"\s*,\s*"([\w,]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"\s*$', message_info)  # noqa
+            m = re.match(r'\s*LOG_\w+\s*,\s*sizeof\([^)]+\)\s*,\s*"(\w+)"\s*,\s*"(\w+)"\s*,\s*"([\w,]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"\s*(,\s*true)?\s*$', message_info)  # noqa
             if m is None:
                 continue
             (name, fmt, labels, units, multipliers) = (m.group(1), m.group(2), m.group(3), m.group(4), m.group(5))
@@ -1971,8 +2002,8 @@ class AutoTest(ABC):
                         if type(line) == bytes:
                             line = line.decode("utf-8")
                         if state == state_outside:
-                            if (re.match(r"\s*AP::logger\(\)[.]Write\(", line) or
-                                    re.match(r"\s*logger[.]Write\(", line)):
+                            if (re.match(r"\s*AP::logger\(\)[.]Write(?:Streaming)?\(", line) or
+                                    re.match(r"\s*logger[.]Write(?:Streaming)?\(", line)):
                                 state = state_inside
                                 line = re.sub("//.*", "", line) # trim comments
                                 log_write_statement = line
@@ -1996,10 +2027,10 @@ class AutoTest(ABC):
                 log_write_statement = re.sub(define, defines[define], log_write_statement)
             # fair warning: order is important here because of the
             # NKT/XKT special case below....
-            my_re = r' logger[.]Write\(\s*"(\w+)"\s*,\s*"([\w,]+)".*\);'
+            my_re = r' logger[.]Write(?:Streaming)?\(\s*"(\w+)"\s*,\s*"([\w,]+)".*\);'
             m = re.match(my_re, log_write_statement)
             if m is None:
-                my_re = r' AP::logger\(\)[.]Write\(\s*"(\w+)"\s*,\s*"([\w,]+)".*\);'
+                my_re = r' AP::logger\(\)[.]Write(?:Streaming)?\(\s*"(\w+)"\s*,\s*"([\w,]+)".*\);'
                 m = re.match(my_re, log_write_statement)
             if m is None:
                 raise NotAchievedException("Did not match (%s) with (%s)" % (log_write_statement, str(my_re)))
@@ -2119,7 +2150,12 @@ class AutoTest(ABC):
         self.set_streamrate(self.sitl_streamrate())
         self.progress("Reboot complete")
 
-    def customise_SITL_commandline(self, customisations, model=None, defaults_filepath=None, wipe=False):
+    def customise_SITL_commandline(self,
+                                   customisations,
+                                   model=None,
+                                   defaults_filepath=None,
+                                   wipe=False,
+                                   set_streamrate_callback=None):
         '''customisations could be "--uartF=sim:nmea" '''
         self.contexts[-1].sitl_commandline_customised = True
         self.stop_SITL()
@@ -2132,11 +2168,17 @@ class AutoTest(ABC):
             if time.time() - tstart > 30:
                 raise NotAchievedException("Failed to customise")
             try:
-                self.wait_heartbeat(drain_mav=True)
+                m = self.wait_heartbeat(drain_mav=True)
+                if m.type == 0:
+                    self.progress("Bad heartbeat: %s" % str(m))
+                    continue
             except IOError:
                 pass
             break
-        self.set_streamrate(self.sitl_streamrate())
+        if set_streamrate_callback is not None:
+            set_streamrate_callback()
+        else:
+            self.set_streamrate(self.sitl_streamrate())
         m = self.mav.recv_match(type='RC_CHANNELS', blocking=True, timeout=15)
         if m is None:
             raise NotAchievedException("No RC_CHANNELS message after restarting SITL")
@@ -2148,12 +2190,34 @@ class AutoTest(ABC):
             self.valgrind_restart_defaults_filepath = defaults_filepath
             self.valgrind_restart_customisations = customisations
 
+    def default_parameter_list(self):
+        ret = {
+            'LOG_DISARMED': 1,
+        }
+        if self.force_ahrs_type is not None:
+            if self.force_ahrs_type == 2:
+                ret["EK2_ENABLE"] = 1
+            if self.force_ahrs_type == 3:
+                ret["EK3_ENABLE"] = 1
+            ret["AHRS_EKF_TYPE"] = self.force_ahrs_type
+        if self.replay:
+            ret["LOG_REPLAY"] = 1
+        return ret
+
+    def apply_default_parameter_list(self):
+        self.set_parameters(self.default_parameter_list())
+
+    def apply_default_parameters(self):
+        self.apply_defaultfile_parameters()
+        self.apply_default_parameter_list()
+        self.reboot_sitl()
+
     def reset_SITL_commandline(self):
         self.progress("Resetting SITL commandline to default")
         self.stop_SITL()
         self.start_SITL(wipe=True)
         self.set_streamrate(self.sitl_streamrate())
-        self.apply_defaultfile_parameters()
+        self.apply_default_parameters()
         try:
             del self.valgrind_restart_customisations
         except Exception:
@@ -2168,14 +2232,10 @@ class AutoTest(ABC):
 
     def close(self):
         """Tidy up after running all tests."""
-        if self.use_map:
-            self.mavproxy.send("module unload map\n")
-            self.mavproxy.expect("Unloaded module map")
 
         if self.mav is not None:
             self.mav.close()
             self.mav = None
-        util.pexpect_close(self.mavproxy)
         self.stop_SITL()
 
         valgrind_log = util.valgrind_log_filepath(binary=self.binary,
@@ -2410,6 +2470,48 @@ class AutoTest(ABC):
             if bytes1[i] != bytes2[i]:
                 raise NotAchievedException("differ at offset %u" % i)
 
+    def HIGH_LATENCY2(self):
+        '''test sending of HIGH_LATENCY2'''
+
+        # set airspeed sensor type to DLVR for air temperature message testing
+        self.set_parameter("ARSPD_BUS", 2)
+        self.set_parameter("ARSPD_TYPE", 7)
+        self.reboot_sitl()
+
+        # should not be getting HIGH_LATENCY2 by default
+        m = self.mav.recv_match(type='HIGH_LATENCY2', blocking=True, timeout=2)
+        if m is not None:
+            raise NotAchievedException("Shouldn't be getting HIGH_LATENCY2 by default")
+        m = self.poll_message("HIGH_LATENCY2")
+        if (m.failure_flags & mavutil.mavlink.HL_FAILURE_FLAG_GPS) != 0:
+            raise NotAchievedException("Expected GPS to be OK")
+        self.assert_sensor_state(mavutil.mavlink.MAV_SYS_STATUS_SENSOR_GPS, True, True, True)
+        self.set_parameter("SIM_GPS_TYPE", 0)
+        self.delay_sim_time(10)
+        self.assert_sensor_state(mavutil.mavlink.MAV_SYS_STATUS_SENSOR_GPS, False, False, False)
+        m = self.poll_message("HIGH_LATENCY2")
+        self.progress(self.dump_message_verbose(m))
+        if (m.failure_flags & mavutil.mavlink.HL_FAILURE_FLAG_GPS) == 0:
+            raise NotAchievedException("Expected GPS to be failed")
+
+        self.start_subtest("HIGH_LATENCY2 location")
+        self.set_parameter("SIM_GPS_TYPE", 1)
+        self.delay_sim_time(10)
+        m = self.poll_message("HIGH_LATENCY2")
+        self.progress(self.dump_message_verbose(m))
+        loc = mavutil.location(m.latitude, m.longitude, m.altitude, 0)
+        dist = self.get_distance_int(loc, self.sim_location_int())
+
+        if dist > 1:
+            raise NotAchievedException("Bad location from HIGH_LATENCY2")
+
+        self.start_subtest("HIGH_LATENCY2 Air Temperature")
+        m = self.poll_message("HIGH_LATENCY2")
+        mavutil.dump_message_verbose(sys.stdout, m)
+
+        if m.temperature_air == -128: # High_Latency2 defaults to INT8_MIN for no temperature available
+            raise NotAchievedException("Air Temperature not received from HIGH_LATENCY2")
+
     def test_log_download(self):
         if self.is_tracker():
             # tracker starts armed, which is annoying
@@ -2477,10 +2579,11 @@ class AutoTest(ABC):
         if m is not None:
             raise NotAchievedException("Received extra LOG_ENTRY?!")
 
-        # download  the 6th and seventh byte of the fifth log
         log_id = 5
         ofs = 6
         count = 2
+        self.start_subtest("downloading %u bytes from offset %u from log_id %u" %
+                           (count, ofs, log_id))
         self.mav.mav.log_request_data_send(self.sysid_thismav(),
                                            1, # target component
                                            log_id,
@@ -2507,10 +2610,9 @@ class AutoTest(ABC):
         if m.data[1] != actual_bytes[1]:
             raise NotAchievedException("Bad second byte")
 
-        # make file contents available
-        # download an entire file
         log_id = 7
         log_filepath = self.log_filepath(log_id)
+        self.start_subtest("Downloading log id %u (%s)" % (log_id, log_filepath))
         with open(log_filepath, "rb") as bob:
             actual_bytes = bytearray(bob.read())
 
@@ -2607,8 +2709,10 @@ class AutoTest(ABC):
                                            (len(actual_bytes), len(data_downloaded)))
             self.assert_bytes_equal(actual_bytes, data_downloaded)
 
-        # ... and now download it reading backwards...
+        self.start_subtest("Download log backwards")
         bytes_to_read = bytes_to_fetch
+        if log_entry.size < bytes_to_read:
+            bytes_to_read = log_entry.size
         bytes_read = 0
         backwards_data_downloaded = []
         last_print = 0
@@ -2634,7 +2738,9 @@ class AutoTest(ABC):
             if m is None:
                 raise NotAchievedException("Did not get reply")
             if m.count == 0:
-                raise NotAchievedException("xZero bytes read")
+                raise NotAchievedException("xZero bytes read (ofs=%u)" % (ofs,))
+            if m.count > bytes_to_fetch:
+                raise NotAchievedException("Read too many bytes?!")
             stuff = m.data[0:m.count]
             stuff.extend(backwards_data_downloaded)
             backwards_data_downloaded = stuff
@@ -2654,17 +2760,32 @@ class AutoTest(ABC):
     #################################################
     def get_sim_time(self, timeout=60):
         """Get SITL time in seconds."""
-        m = self.mav.recv_match(type='SYSTEM_TIME', blocking=True, timeout=timeout)
-        if m is None:
-            raise AutoTestTimeoutException("Did not get SYSTEM_TIME message after %f seconds" % timeout)
-        return m.time_boot_ms * 1.0e-3
+        self.drain_mav()
+        tstart = time.time()
+        while True:
+            self.drain_all_pexpects()
+            if time.time() - tstart > timeout:
+                raise AutoTestTimeoutException("Did not get SYSTEM_TIME message after %f seconds" % timeout)
+
+            m = self.mav.recv_match(type='SYSTEM_TIME', blocking=True, timeout=0.1)
+            if m is None:
+                continue
+
+            return m.time_boot_ms * 1.0e-3
 
     def get_sim_time_cached(self):
         """Get SITL time in seconds."""
         x = self.mav.messages.get("SYSTEM_TIME", None)
         if x is None:
             raise NotAchievedException("No cached time available (%s)" % (self.mav.sysid,))
-        return x.time_boot_ms * 1.0e-3
+        ret = x.time_boot_ms * 1.0e-3
+        if ret != self.last_sim_time_cached:
+            self.last_sim_time_cached = ret
+            self.last_sim_time_cached_wallclock = time.time()
+        else:
+            if time.time() - self.last_sim_time_cached_wallclock > 30:
+                raise AutoTestTimeoutException("sim_time_cached is not updating!")
+        return ret
 
     def sim_location(self):
         """Return current simulator location."""
@@ -2691,6 +2812,64 @@ class AutoTest(ABC):
         self.set_rc(ch, 1000)
         self.delay_sim_time(1)
 
+    def create_simple_relhome_mission(self, items_in, target_system=1, target_component=1):
+        '''takes a list of (type, n, e, alt) items.  Creates a mission in
+        absolute frame using alt as relative-to-home and n and e as
+        offsets in metres from home'''
+
+        # add a dummy waypoint for home
+        items = [(mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0)]
+        items.extend(items_in)
+        seq = 0
+        ret = []
+        for (t, n, e, alt) in items:
+            lat = 0
+            lng = 0
+            if n != 0 or e != 0:
+                loc = self.home_relative_loc_ne(n, e)
+                lat = loc.lat
+                lng = loc.lng
+            p1 = 0
+            frame = mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT
+            if not self.ardupilot_stores_frame_for_cmd(t):
+                frame = mavutil.mavlink.MAV_FRAME_GLOBAL
+            ret.append(self.mav.mav.mission_item_int_encode(
+                target_system,
+                target_component,
+                seq, # seq
+                frame,
+                t,
+                0, # current
+                0, # autocontinue
+                p1, # p1
+                0, # p2
+                0, # p3
+                0, # p4
+                int(lat*1e7), # latitude
+                int(lng*1e7), # longitude
+                alt, # altitude
+                mavutil.mavlink.MAV_MISSION_TYPE_MISSION),
+            )
+            seq += 1
+
+        return ret
+
+    def upload_simple_relhome_mission(self, items, target_system=1, target_component=1):
+        mission = self.create_simple_relhome_mission(
+            items,
+            target_system=target_system,
+            target_component=target_component)
+        self.check_mission_upload_download(mission)
+
+    def get_mission_count(self):
+        return self.get_parameter("MIS_TOTAL")
+
+    def assert_mission_count(self, expected):
+        count = self.get_mission_count()
+        if count != expected:
+            raise NotAchievedException("Unexpected count got=%u want=%u" %
+                                       (count, expected))
+
     def clear_wp(self, ch=8):
         """Trigger RC Aux to clear waypoint."""
         self.progress("Clearing waypoints")
@@ -2699,8 +2878,7 @@ class AutoTest(ABC):
         self.set_rc(ch, 2000)
         self.delay_sim_time(0.5)
         self.set_rc(ch, 1000)
-        self.mavproxy.send('wp list\n')
-        self.mavproxy.expect('Requesting 0 waypoints')
+        self.assert_mission_count(0)
 
     def log_list(self):
         '''return a list of log files present in POSIX-style loging dir'''
@@ -2737,6 +2915,7 @@ class AutoTest(ABC):
             raise NotAchievedException("target temperature")
 
     def onboard_logging_not_log_disarmed(self):
+        self.start_subtest("Test LOG_DISARMED-is-false behaviour")
         self.set_parameter("LOG_DISARMED", 0)
         self.set_parameter("LOG_FILE_DSRMROT", 0)
         self.reboot_sitl()
@@ -2809,6 +2988,7 @@ class AutoTest(ABC):
             self.progress("Unexpected new log found")
 
     def onboard_logging_log_disarmed(self):
+        self.start_subtest("Test LOG_DISARMED-is-true behaviour")
         start_list = self.log_list()
         self.set_parameter("LOG_FILE_DSRMROT", 0)
         self.set_parameter("LOG_DISARMED", 0)
@@ -2883,28 +3063,50 @@ class AutoTest(ABC):
 
         # self.progress("If we re-arm during the HAL_LOGGER_ARM_PERSIST period it should rotate")
 
+    def onboard_logging_forced_arm(self):
+        '''ensure a bug where we didn't start logging when arming was forced
+        does not reappear'''
+        self.start_subtest("Ensure we get a log when force-arming")
+        self.set_parameter("LOG_DISARMED", 0)
+        self.reboot_sitl()  # so we'll definitely start a log on arming
+        pre_arming_list = self.log_list()
+        self.wait_ready_to_arm()
+        self.arm_vehicle(force=True)
+        # we might be relying on a thread to actually create the log
+        # file when doing forced-arming; give the file time to appear:
+        self.delay_sim_time(10)
+        post_arming_list = self.log_list()
+        self.disarm_vehicle()
+        if len(post_arming_list) <= len(pre_arming_list):
+            raise NotAchievedException("Did not get a log on forced arm")
+
     def test_onboard_logging(self):
         if self.is_tracker():
             return
+        self.onboard_logging_forced_arm()
         self.onboard_logging_log_disarmed()
         self.onboard_logging_not_log_disarmed()
 
     def test_log_download_mavproxy(self, upload_logs=False):
         """Download latest log."""
         filename = "MAVProxy-downloaded-log.BIN"
-        self.mavproxy.send("module load log\n")
-        self.mavproxy.expect("Loaded module log")
-        self.mavproxy.send("log list\n")
-        self.mavproxy.expect("numLogs")
+        mavproxy = self.start_mavproxy()
+        mavproxy.send("module load log\n")
+        mavproxy.expect("Loaded module log")
+        mavproxy.send("log list\n")
+        mavproxy.expect("numLogs")
         self.wait_heartbeat()
         self.wait_heartbeat()
-        self.mavproxy.send("set shownoise 0\n")
-        self.mavproxy.send("log download latest %s\n" % filename)
-        self.mavproxy.expect("Finished downloading", timeout=120)
-        self.mavproxy.send("module unload log\n")
-        self.mavproxy.expect("Unloaded module log")
+        mavproxy.send("set shownoise 0\n")
+        mavproxy.send("log download latest %s\n" % filename)
+        mavproxy.expect("Finished downloading", timeout=120)
+        mavproxy.send("module unload log\n")
+        mavproxy.expect("Unloaded module log")
+        self.stop_mavproxy(mavproxy)
 
     def log_upload(self):
+        self.progress("Log upload disabled as CI artifacts are good")
+        return
         if len(self.fail_list) > 0 and os.getenv("AUTOTEST_UPLOAD"):
             # optionally upload logs to server so we can see travis failure logs
             import datetime
@@ -3055,8 +3257,10 @@ class AutoTest(ABC):
                 raise ValueError("count %u not handled" % count)
         self.progress("Files same")
 
-    def assert_receive_message(self, type, timeout=1):
+    def assert_receive_message(self, type, timeout=1, verbose=False):
         m = self.mav.recv_match(type=type, blocking=True, timeout=timeout)
+        if verbose:
+            self.progress("Received (%s)" % str(m))
         if m is None:
             raise NotAchievedException("Did not get %s" % type)
         return m
@@ -3156,11 +3360,19 @@ class AutoTest(ABC):
         """Load rally points from a file to flight controller."""
         self.progress("Loading rally points (%s)" % filename)
         path = os.path.join(testdir, self.current_test_name_directory, filename)
-        self.mavproxy.send('rally load %s\n' % path)
-        self.mavproxy.expect("Loaded")
+        mavproxy = self.start_mavproxy()
+        mavproxy.send('rally load %s\n' % path)
+        mavproxy.expect("Loaded")
+        self.stop_mavproxy(mavproxy)
 
     def load_sample_mission(self):
         self.load_mission(self.sample_mission_filename())
+
+    def load_generic_mission(self, filename, strict=True):
+        return self.load_mission_from_filepath(
+            os.path.join(testdir, "Generic_Missions"),
+            filename,
+            strict=strict)
 
     def load_mission(self, filename, strict=True):
         return self.load_mission_from_filepath(
@@ -3204,12 +3416,16 @@ class AutoTest(ABC):
         self.check_mission_upload_download(wpoints_int, strict=strict)
         return len(wpoints_int)
 
-    def load_mission_using_mavproxy(self, filename):
+    def load_mission_using_mavproxy(self, mavproxy, filename):
         return self.load_mission_from_filepath_using_mavproxy(
+            mavproxy,
             self.current_test_name_directory,
             filename)
 
-    def load_mission_from_filepath_using_mavproxy(self, filepath, filename):
+    def load_mission_from_filepath_using_mavproxy(self,
+                                                  mavproxy,
+                                                  filepath,
+                                                  filename):
         """Load a mission from a file to flight controller."""
         self.progress("Loading mission (%s)" % filename)
         path = os.path.join(testdir, filepath, filename)
@@ -3223,20 +3439,20 @@ class AutoTest(ABC):
                 self.progress("Waiting for MAVProxy de-dupe timer to expire")
                 self.drain_mav_unparsed()
                 time.sleep(0.1)
-            self.mavproxy.send('wp load %s\n' % path)
-            self.mavproxy.expect('Loaded ([0-9]+) waypoints from')
-            load_count = self.mavproxy.match.group(1)
+            mavproxy.send('wp load %s\n' % path)
+            mavproxy.expect('Loaded ([0-9]+) waypoints from')
+            load_count = mavproxy.match.group(1)
             self.last_wp_load = time.time()
-            self.mavproxy.expect("Flight plan received")
-            self.mavproxy.send('wp list\n')
-            self.mavproxy.expect('Requesting ([0-9]+) waypoints')
-            request_count = self.mavproxy.match.group(1)
+            mavproxy.expect("Flight plan received")
+            mavproxy.send('wp list\n')
+            mavproxy.expect('Requesting ([0-9]+) waypoints')
+            request_count = mavproxy.match.group(1)
             if load_count != request_count:
                 self.progress("request_count=%s != load_count=%s" %
                               (request_count, load_count))
                 continue
-            self.mavproxy.expect('Saved ([0-9]+) waypoints to (.+?way.txt)')
-            save_count = self.mavproxy.match.group(1)
+            mavproxy.expect('Saved ([0-9]+) waypoints to (.+?way.txt)')
+            save_count = mavproxy.match.group(1)
             if save_count != request_count:
                 raise NotAchievedException("request count != load count")
             # warning: this assumes MAVProxy was started in the CWD!
@@ -3244,14 +3460,14 @@ class AutoTest(ABC):
             # the git root, like this:
             # timelimit 32000 APM/Tools/autotest/autotest.py --timeout=30000 > buildlogs/autotest-output.txt 2>&1
             # that means the MAVProxy log files are not reltopdir!
-            saved_filepath = self.mavproxy.match.group(2)
+            saved_filepath = mavproxy.match.group(2)
             saved_filepath = saved_filepath.rstrip()
             self.assert_mission_files_same(path, saved_filepath)
             break
-        self.mavproxy.send('wp status\n')
-        self.mavproxy.expect(r'Have (\d+) of (\d+)')
-        status_have = self.mavproxy.match.group(1)
-        status_want = self.mavproxy.match.group(2)
+        mavproxy.send('wp status\n')
+        mavproxy.expect(r'Have (\d+) of (\d+)')
+        status_have = mavproxy.match.group(1)
+        status_want = mavproxy.match.group(2)
         if status_have != status_want:
             raise ValueError("status count mismatch")
         if status_have != save_count:
@@ -3265,15 +3481,16 @@ class AutoTest(ABC):
                              (num_wp, int(status_have)))
         if num_wp == 0:
             raise ValueError("No waypoints loaded?!")
+
         return num_wp
 
-    def save_mission_to_file(self, filename):
+    def save_mission_to_file_using_mavproxy(self, mavproxy, filename):
         """Save a mission to a file"""
-        self.mavproxy.send('wp list\n')
-        self.mavproxy.expect('Requesting [0-9]+ waypoints')
-        self.mavproxy.send('wp save %s\n' % filename)
-        self.mavproxy.expect('Saved ([0-9]+) waypoints')
-        num_wp = int(self.mavproxy.match.group(1))
+        mavproxy.send('wp list\n')
+        mavproxy.expect('Requesting [0-9]+ waypoints')
+        mavproxy.send('wp save %s\n' % filename)
+        mavproxy.expect('Saved ([0-9]+) waypoints')
+        num_wp = int(mavproxy.match.group(1))
         self.progress("num_wp: %d" % num_wp)
         return num_wp
 
@@ -3428,6 +3645,7 @@ class AutoTest(ABC):
                     bad_channels += " (ch=%u want=%u got=%u)" % (chan, map_copy[chan], chan_pwm)
                     break
             if len(bad_channels) == 0:
+                self.progress("RC values good")
                 break
             self.progress("RC values bad:%s" % bad_channels)
             if not self.rc_thread.is_alive():
@@ -3500,6 +3718,11 @@ class AutoTest(ABC):
         location.lng = lng
         print("new: %f %f" % (location.lat, location.lng))
 
+    def home_relative_loc_ne(self, n, e):
+        ret = self.home_position_as_mav_location()
+        self.location_offset_ne(ret, n, e)
+        return ret
+
     def zero_throttle(self):
         """Set throttle to zero."""
         if self.is_rover():
@@ -3548,6 +3771,18 @@ class AutoTest(ABC):
             return os.path.join(testdir, self.current_test_name_directory + "test_arming.txt")
         else:
             return None
+
+    def set_safetyswitch_on(self):
+        self.set_safetyswitch(1)
+
+    def set_safetyswitch_off(self):
+        self.set_safetyswitch(0)
+
+    def set_safetyswitch(self, value, target_system=1, target_component=1):
+        self.mav.mav.set_mode_send(
+            target_system,
+            mavutil.mavlink.MAV_MODE_FLAG_DECODE_POSITION_SAFETY,
+            value)
 
     def armed(self):
         """Return true if vehicle is armed and safetyoff"""
@@ -3621,19 +3856,27 @@ class AutoTest(ABC):
                     target_compid=None,
                 ))
 
-    def arm_vehicle(self, timeout=20):
+    def arm_vehicle(self, timeout=20, force=False):
         """Arm vehicle with mavlink arm message."""
         self.progress("Arm motors with MAVLink cmd")
         self.drain_mav()
-        self.run_cmd(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-                     1,  # ARM
-                     0,
-                     0,
-                     0,
-                     0,
-                     0,
-                     0,
-                     timeout=timeout)
+        p2 = 0
+        if force:
+            p2 = 2989
+        try:
+            self.run_cmd(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                         1,  # ARM
+                         p2,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         timeout=timeout)
+        except ValueError as e:
+            # statustexts are queued; give it a second to arrive:
+            self.delay_sim_time(5)
+            raise e
         try:
             self.wait_armed()
         except AutoTestTimeoutException:
@@ -3692,6 +3935,54 @@ class AutoTest(ABC):
                 self.progress("DISARMED after %.2f seconds (allowed=%.2f)" %
                               (delta, timeout))
                 return True
+
+    def wait_attitude(self, desroll=None, despitch=None, timeout=2, tolerance=10, message_type='ATTITUDE'):
+        '''wait for an attitude (degrees)'''
+        if desroll is None and despitch is None:
+            raise ValueError("despitch or desroll must be supplied")
+        tstart = self.get_sim_time()
+        while True:
+            if self.get_sim_time_cached() - tstart > timeout:
+                raise AutoTestTimeoutException("Failed to achieve attitude")
+            m = self.assert_receive_message(message_type, timeout=60)
+            roll_deg = math.degrees(m.roll)
+            pitch_deg = math.degrees(m.pitch)
+            self.progress("wait_att: roll=%f desroll=%s pitch=%f despitch=%s" %
+                          (roll_deg, desroll, pitch_deg, despitch))
+            if desroll is not None and abs(roll_deg - desroll) > tolerance:
+                continue
+            if despitch is not None and abs(pitch_deg - despitch) > tolerance:
+                continue
+            return
+
+    def wait_attitude_quaternion(self,
+                                 desroll=None,
+                                 despitch=None,
+                                 timeout=2,
+                                 tolerance=10,
+                                 message_type='ATTITUDE_QUATERNION'):
+        '''wait for an attitude (degrees)'''
+        if desroll is None and despitch is None:
+            raise ValueError("despitch or desroll must be supplied")
+        tstart = self.get_sim_time()
+        while True:
+            if self.get_sim_time_cached() - tstart > timeout:
+                raise AutoTestTimeoutException("Failed to achieve attitude")
+            m = self.poll_message(message_type)
+            q = quaternion.Quaternion([m.q1, m.q2, m.q3, m.q4])
+            euler = q.euler
+            roll = euler[0]
+            pitch = euler[1]
+            roll_deg = math.degrees(roll)
+            pitch_deg = math.degrees(pitch)
+            self.progress("wait_att_quat: roll=%f desroll=%s pitch=%f despitch=%s" %
+                          (roll_deg, desroll, pitch_deg, despitch))
+            if desroll is not None and abs(roll_deg - desroll) > tolerance:
+                continue
+            if despitch is not None and abs(pitch_deg - despitch) > tolerance:
+                continue
+            self.progress("wait_att_quat: achieved")
+            return
 
     def CPUFailsafe(self):
         '''Most vehicles just disarm on failsafe'''
@@ -3766,18 +4057,18 @@ class AutoTest(ABC):
         self.cpufailsafe_wait_servo_channel_value(2, 1660)
         self.reset_SITL_commandline()
 
-    def mavproxy_arm_vehicle(self):
+    def mavproxy_arm_vehicle(self, mavproxy):
         """Arm vehicle with mavlink arm message send from MAVProxy."""
         self.progress("Arm motors with MavProxy")
-        self.mavproxy.send('arm throttle\n')
+        mavproxy.send('arm throttle\n')
         self.mav.motors_armed_wait()
         self.progress("ARMED")
         return True
 
-    def mavproxy_disarm_vehicle(self):
+    def mavproxy_disarm_vehicle(self, mavproxy):
         """Disarm vehicle with mavlink disarm message send from MAVProxy."""
         self.progress("Disarm motors with MavProxy")
-        self.mavproxy.send('disarm\n')
+        mavproxy.send('disarm\n')
         self.wait_disarmed()
         return True
 
@@ -3793,13 +4084,12 @@ class AutoTest(ABC):
                 self.progress("MOTORS ARMED OK WITH RADIO")
                 self.set_output_to_trim(self.get_stick_arming_channel())
                 self.progress("Arm in %ss" % tdelta)  # TODO check arming time
-                return True
+                return
             print("Not armed after %f seconds" % (tdelta))
             if tdelta > timeout:
                 break
-        self.progress("Failed to ARM with radio")
         self.set_output_to_trim(self.get_stick_arming_channel())
-        return False
+        raise NotAchievedException("Failed to ARM with radio")
 
     def disarm_motors_with_rc_input(self, timeout=20, watch_for_disabled=False):
         """Disarm motors with radio."""
@@ -3821,11 +4111,10 @@ class AutoTest(ABC):
                 self.progress("Found 'Rudder disarm: disabled' in statustext")
                 break
             self.context_clear_collection('STATUSTEXT')
-        if not ret:
-            self.progress("Failed to DISARM with RC input")
         self.set_output_to_trim(self.get_stick_arming_channel())
         self.context_pop()
-        return ret
+        if not ret:
+            raise NotAchievedException("Failed to DISARM with RC input")
 
     def arm_motors_with_switch(self, switch_chan, timeout=20):
         """Arm motors with switch."""
@@ -3836,9 +4125,8 @@ class AutoTest(ABC):
             self.wait_heartbeat()
             if self.mav.motors_armed():
                 self.progress("MOTORS ARMED OK WITH SWITCH")
-                return True
-        self.progress("Failed to ARM with switch")
-        return False
+                return
+        raise NotAchievedException("Failed to ARM with switch")
 
     def disarm_motors_with_switch(self, switch_chan, timeout=20):
         """Disarm motors with switch."""
@@ -3849,9 +4137,8 @@ class AutoTest(ABC):
             self.wait_heartbeat()
             if not self.mav.motors_armed():
                 self.progress("MOTORS DISARMED OK WITH SWITCH")
-                return True
-        self.progress("Failed to DISARM with switch")
-        return False
+                return
+        raise NotAchievedException("Failed to DISARM with switch")
 
     def disarm_wait(self, timeout=10):
         tstart = self.get_sim_time()
@@ -3916,18 +4203,19 @@ class AutoTest(ABC):
     def set_parameter(self, name, value, **kwargs):
         self.set_parameters({name: value}, **kwargs)
 
-    def set_parameters(self, parameters, add_to_context=True, epsilon_pct=0.00001, retries=None, verbose=True):
+    def set_parameters(self, parameters, add_to_context=True, epsilon_pct=0.00001, verbose=True, attempts=None):
         """Set parameters from vehicle."""
+
         want = copy.copy(parameters)
         self.progress("set_parameters: (%s)" % str(want))
         self.drain_mav()
         if len(want) == 0:
             return
 
-        if retries is None:
+        if attempts is None:
             # we can easily fill ArduPilot's param-set/param-get queue
             # which is quite short.  So we retry *a lot*.
-            retries = (len(want)+1) * 5
+            attempts = len(want) * 10
 
         param_value_messages = []
 
@@ -3941,14 +4229,18 @@ class AutoTest(ABC):
 
         original_values = {}
         autopilot_values = {}
-        for i in range(retries):
+        for i in range(attempts):
             self.drain_mav(quiet=True)
+            self.drain_all_pexpects()
             received = set()
             for (name, value) in want.items():
-                # self.progress("%s want=%f autopilot=%s" % (name, value, autopilot_values.get(name, 'None')))
+                if verbose:
+                    self.progress("%s want=%f autopilot=%s (attempt=%u/%u)" %
+                                  (name, value, autopilot_values.get(name, 'None'), i+1, attempts))
                 if name not in autopilot_values:
+                    if verbose:
+                        self.progress("Requesting (%s)" % (name,))
                     self.send_get_parameter_direct(name)
-                    # self.progress("Requesting (%s) (retry=%u)" % (name, i))
                     continue
                 delta = abs(autopilot_values[name] - value)
                 if delta <= epsilon_pct*0.01*abs(value):
@@ -3971,12 +4263,6 @@ class AutoTest(ABC):
                     self.do_timesync_roundtrip(quiet=True)
                 except AutoTestTimeoutException:
                     pass
-                    # now = self.get_sim_time_cached()
-                    # if tstart > now:
-                    #     self.progress("Time wrap detected")
-                    # else:
-                    #     raise
-#            do_fetch_all = False
             for m in param_value_messages:
                 if m.param_id in want:
                     self.progress("Received wanted PARAM_VALUE %s=%f" %
@@ -3984,12 +4270,7 @@ class AutoTest(ABC):
                     autopilot_values[m.param_id] = m.param_value
                     if m.param_id not in original_values:
                         original_values[m.param_id] = m.param_value
-                        # if (self.should_fetch_all_for_parameter_change(m.param_id.upper()) and
-                        #         m.param_value != 0):
-                        #     do_fetch_all = True
             param_value_messages = []
-#            if do_fetch_all:
-#                self.do_fetch_all()
 
         self.remove_message_hook(add_param_value)
 
@@ -4047,15 +4328,15 @@ class AutoTest(ABC):
                     self.progress("(%s) != (%s)" % (m.param_id, name,))
         raise NotAchievedException("Failed to retrieve parameter (%s)" % name)
 
-    def get_parameter_mavproxy(self, name, attempts=1, timeout=60):
+    def get_parameter_mavproxy(self, mavproxy, name, attempts=1, timeout=60):
         """Get parameters from vehicle."""
         for i in range(0, attempts):
-            self.mavproxy.send("param fetch %s\n" % name)
+            mavproxy.send("param fetch %s\n" % name)
             try:
-                self.mavproxy.expect("%s = ([-0-9.]*)\r\n" % (name,), timeout=timeout/attempts)
+                mavproxy.expect("%s = ([-0-9.]*)\r\n" % (name,), timeout=timeout/attempts)
                 try:
                     # sometimes race conditions garble the MAVProxy output
-                    ret = float(self.mavproxy.match.group(1))
+                    ret = float(mavproxy.match.group(1))
                 except ValueError:
                     continue
                 return ret
@@ -4086,6 +4367,13 @@ class AutoTest(ABC):
             return
         context.collections[msg_type] = []
 
+    def context_collection(self, msg_type):
+        '''return messages in collection'''
+        context = self.context_get()
+        if msg_type not in context.collections:
+            raise NotAchievedException("Not collecting (%s)" % str(msg_type))
+        return context.collections[msg_type]
+
     def context_clear_collection(self, msg_type):
         '''clear collection of message type msg_type'''
         context = self.context_get()
@@ -4105,6 +4393,9 @@ class AutoTest(ABC):
     def context_pop(self):
         """Set parameters to origin values in reverse order."""
         dead = self.contexts.pop()
+        if dead.sitl_commandline_customised and len(self.contexts):
+            self.contexts[-1].sitl_commandline_customised = True
+
         dead_parameters_dict = {}
         for p in dead.parameters:
             dead_parameters_dict[p[0]] = p[1]
@@ -4223,7 +4514,7 @@ class AutoTest(ABC):
                 target_compid=None,
                 timeout=10,
                 quiet=False):
-        self.drain_mav_unparsed()
+        self.drain_mav()
         self.get_sim_time() # required for timeout in run_cmd_get_ack to work
         self.send_cmd(
             command,
@@ -4388,6 +4679,11 @@ class AutoTest(ABC):
         #
         # return math.sqrt((dlat*dlat) + (dlong*dlong)) * 1.113195e5
 
+    def bearing_to(self, loc):
+        '''return bearing from here to location'''
+        here = self.mav.location()
+        return self.get_bearing(here, loc)
+
     @staticmethod
     def get_bearing(loc1, loc2):
         """Get bearing from loc1 to loc2."""
@@ -4475,7 +4771,7 @@ class AutoTest(ABC):
                 return mode_map.get(mode)
         if mode in mode_map.values():
             return mode
-        self.progress("Available modes '%s'" % mode_map)
+        self.progress("No mode (%s); available modes '%s'" % (mode, mode_map))
         raise ErrorException("Unknown mode '%s'" % mode)
 
     def run_cmd_do_set_mode(self,
@@ -4511,7 +4807,7 @@ class AutoTest(ABC):
             if m.custom_mode == want_custom_mode:
                 return
 
-    def mavproxy_do_set_mode_via_command_long(self, mode, timeout=30):
+    def mavproxy_do_set_mode_via_command_long(self, mavproxy, mode, timeout=30):
         """Set mode with a command long message with Mavproxy."""
         base_mode = mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
         custom_mode = self.get_mode_from_mode_mapping(mode)
@@ -4520,8 +4816,8 @@ class AutoTest(ABC):
             remaining = timeout - (self.get_sim_time_cached() - tstart)
             if remaining <= 0:
                 raise AutoTestTimeoutException("Failed to change mode")
-            self.mavproxy.send("long DO_SET_MODE %u %u\n" %
-                               (base_mode, custom_mode))
+            mavproxy.send("long DO_SET_MODE %u %u\n" %
+                          (base_mode, custom_mode))
             m = self.wait_heartbeat()
             if m.custom_mode == custom_mode:
                 return True
@@ -4561,7 +4857,7 @@ class AutoTest(ABC):
         data = "dist=%f max=%f (simstate: %s start-loc: %s)" % (dist, dist_max, simstate_loc, start_loc)
 
         if dist > dist_max:
-            raise NotAchievedException("simstate from startup location: %s" % data)
+            raise NotAchievedException("simstate far from startup location: %s" % data)
         self.progress("Simstate Close to startup location: %s" % data)
 
     def reach_distance_manual(self, distance):
@@ -4577,7 +4873,7 @@ class AutoTest(ABC):
             self.wait_distance(distance, accuracy=2)
             self.set_rc(3, 1500)
 
-    def guided_achieve_heading(self, heading):
+    def guided_achieve_heading(self, heading, accuracy=None):
         tstart = self.get_sim_time()
         while True:
             if self.get_sim_time_cached() - tstart > 200:
@@ -4594,6 +4890,10 @@ class AutoTest(ABC):
             )
             m = self.mav.recv_match(type='VFR_HUD', blocking=True)
             self.progress("heading=%d want=%d" % (m.heading, int(heading)))
+            if accuracy is not None:
+                delta = abs(m.heading - int(heading))
+                if delta <= accuracy:
+                    return
             if m.heading == int(heading):
                 return
 
@@ -4641,12 +4941,15 @@ class AutoTest(ABC):
     #################################################
     # WAIT UTILITIES
     #################################################
-    def delay_sim_time(self, seconds_to_wait):
+    def delay_sim_time(self, seconds_to_wait, reason=None):
         """Wait some second in SITL time."""
-        self.drain_mav_unparsed()
+        self.drain_mav()
         tstart = self.get_sim_time()
         tnow = tstart
-        self.progress("Delaying %f seconds" % (seconds_to_wait,))
+        r = "Delaying %f seconds"
+        if reason is not None:
+            r += " for %s" % reason
+        self.progress(r % (seconds_to_wait,))
         while tstart + seconds_to_wait > tnow:
             tnow = self.get_sim_time()
 
@@ -4660,6 +4963,38 @@ class AutoTest(ABC):
         if relative:
             return msg.relative_alt / 1000.0  # mm -> m
         return msg.alt / 1000.0  # mm -> m
+
+    def get_esc_rpm(self, esc):
+        if esc > 4:
+            raise ValueError("Only does 1-4")
+        m = self.mav.recv_match(type='ESC_TELEMETRY_1_TO_4', blocking=True, timeout=1)
+        if m is None:
+            raise NotAchievedException("Did not get ESC_TELEMETRY_1_TO_4")
+        self.progress("%s" % str(m))
+        return m.rpm[esc-1]
+
+    def find_first_set_bit(self, mask):
+        '''returns offset of first-set-bit (counting from right) in mask.  Returns None if no bits set'''
+        pos = 0
+        while mask != 0:
+            if mask & 0x1:
+                return pos
+            mask = mask >> 1
+            pos += 1
+        return None
+
+    def wait_esc_telem_rpm(self, esc, rpm_min, rpm_max, **kwargs):
+        '''wait for ESC to be between rpm_min and rpm_max'''
+        def validator(value2, target2=None):
+            return rpm_min <= value2 <= rpm_max
+        self.wait_and_maintain(
+            value_name="ESC %u RPM" % esc,
+            target=(rpm_min+rpm_max)/2.0,
+            current_value_getter=lambda: self.get_esc_rpm(esc),
+            accuracy=rpm_max-rpm_min,
+            validator=lambda value2, target2: validator(value2, target2),
+            **kwargs
+        )
 
     def wait_altitude(self, altitude_min, altitude_max, relative=False, timeout=30, **kwargs):
         """Wait for a given altitude range."""
@@ -4679,6 +5014,32 @@ class AutoTest(ABC):
                 timeout=timeout,
             ),
             accuracy=(altitude_max - altitude_min),
+            validator=lambda value2, target2: validator(value2, target2),
+            timeout=timeout,
+            **kwargs
+        )
+
+    def wait_climbrate(self, speed_min, speed_max, timeout=30, **kwargs):
+        """Wait for a given vertical rate."""
+        assert speed_min <= speed_max, "Minimum speed should be less than maximum speed."
+
+        def get_climbrate(timeout2):
+            msg = self.mav.recv_match(type='VFR_HUD', blocking=True, timeout=timeout2)
+            if msg:
+                return msg.climb
+            raise MsgRcvTimeoutException("Failed to get climb rate")
+
+        def validator(value2, target2=None):
+            if speed_min <= value2 <= speed_max:
+                return True
+            else:
+                return False
+
+        self.wait_and_maintain(
+            value_name="Climbrate",
+            target=speed_min,
+            current_value_getter=lambda: get_climbrate(timeout),
+            accuracy=(speed_max - speed_min),
             validator=lambda value2, target2: validator(value2, target2),
             timeout=timeout,
             **kwargs
@@ -4931,6 +5292,15 @@ class AutoTest(ABC):
             **kwargs
         )
 
+    def wait_distance_to_waypoint(self, wp_num, distance_min, distance_max, **kwargs):
+        # TODO: use mission_request_partial_list_send
+        wps = self.download_using_mission_protocol(mavutil.mavlink.MAV_MISSION_TYPE_MISSION)
+        m = wps[wp_num]
+        self.progress("m: %s" % str(m))
+        loc = mavutil.location(m.x / 1.0e7, m.y / 1.0e7, 0, 0)
+        self.progress("loc: %s" % str(loc))
+        self.wait_distance_to_location(loc, distance_min, distance_max, **kwargs)
+
     def wait_distance_to_location(self, location, distance_min, distance_max, timeout=30, **kwargs):
         """Wait for flight of a given distance."""
         assert distance_min <= distance_max, "Distance min should be less than distance max."
@@ -4994,6 +5364,77 @@ class AutoTest(ABC):
             timeout=timeout,
             **kwargs
         )
+
+    def distance_to_local_position(self, local_pos, timeout=30):
+        (x, y, z_down) = local_pos  # alt is *up*
+
+        pos = self.mav.recv_match(
+            type='LOCAL_POSITION_NED',
+            blocking=True
+        )
+
+        delta_x = pos.x - x
+        delta_y = pos.y - y
+        delta_z = pos.z - z_down
+        return math.sqrt(delta_x*delta_x + delta_y*delta_y + delta_z*delta_z)
+
+    def wait_distance_to_local_position(self,
+                                        local_position,  # (x, y, z_down)
+                                        distance_min,
+                                        distance_max,
+                                        timeout=10,
+                                        **kwargs):
+        """Wait for distance to home to be within specified bounds."""
+        assert distance_min <= distance_max, "Distance min should be less than distance max."
+
+        def get_distance():
+            return self.distance_to_local_position(local_position)
+
+        def validator(value2, target2=None):
+            return distance_min <= value2 <= distance_max
+
+        (x, y, z_down) = local_position
+        self.wait_and_maintain(
+            value_name="Distance to (%f,%f,%f)" % (x, y, z_down),
+            target=distance_min,
+            current_value_getter=lambda: get_distance(),
+            validator=lambda value2,
+            target2: validator(value2, target2),
+            accuracy=(distance_max - distance_min),
+            timeout=timeout,
+            **kwargs
+        )
+
+    def wait_parameter_value(self, parameter, value, timeout=10):
+        tstart = self.get_sim_time()
+        while True:
+            if self.get_sim_time_cached() - tstart > timeout:
+                raise NotAchievedException("%s never got value %f" %
+                                           (parameter, value))
+            v = self.get_parameter(parameter, verbose=False)
+            self.progress("Got parameter value (%s=%f)" %
+                          (parameter, v))
+            if v == value:
+                return
+            self.delay_sim_time(0.1)
+
+    def get_servo_channel_value(self, channel, timeout=2):
+        channel_field = "servo%u_raw" % channel
+        tstart = self.get_sim_time()
+        while True:
+            remaining = timeout - (self.get_sim_time_cached() - tstart)
+            if remaining <= 0:
+                raise NotAchievedException("Channel value condition not met")
+            m = self.mav.recv_match(type='SERVO_OUTPUT_RAW',
+                                    blocking=True,
+                                    timeout=remaining)
+            if m is None:
+                continue
+            m_value = getattr(m, channel_field, None)
+            if m_value is None:
+                raise ValueError("message (%s) has no field %s" %
+                                 (str(m), channel_field))
+            return m_value
 
     def wait_servo_channel_value(self, channel, value, timeout=2, comparator=operator.eq):
         """wait for channel value comparison (default condition is equality)"""
@@ -5206,7 +5647,7 @@ class AutoTest(ABC):
         if m is None:
             raise NotAchievedException("Did not receive SYS_STATUS")
         if verbose:
-            self.progress("Status: %s" % str(mavutil.dump_message_verbose(sys.stdout, m)))
+            self.progress("Status: %s" % str(self.dump_message_verbose(m)))
         reported_present = m.onboard_control_sensors_present & sensor
         reported_enabled = m.onboard_control_sensors_enabled & sensor
         reported_healthy = m.onboard_control_sensors_health & sensor
@@ -5340,7 +5781,7 @@ Also, ignores heartbeats not from our target system'''
 
     def wait_ekf_flags(self, required_value, error_bits, timeout=30):
         self.progress("Waiting for EKF value %u" % required_value)
-        self.drain_mav_unparsed()
+        self.drain_mav()
         last_print_time = 0
         tstart = self.get_sim_time()
         while timeout is None or self.get_sim_time_cached() < tstart + timeout:
@@ -5394,22 +5835,28 @@ Also, ignores heartbeats not from our target system'''
         raise AutoTestTimeoutException("Failed to get EKF.flags=%u disabled" % not_required_value)
 
     def wait_text(self, *args, **kwargs):
-        self.wait_statustext(*args, **kwargs)
+        '''wait for text to appear from vehicle, return that text'''
+        statustext = self.wait_statustext(*args, **kwargs)
+        if statustext is None:
+            return None
+        return statustext.text
 
     def statustext_in_collections(self, text, regex=False):
+        '''searches for text in STATUSTEXT collection, returns message if found'''
         c = self.context_get()
         if "STATUSTEXT" not in c.collections:
             raise NotAchievedException("Asked to check context but it isn't collecting!")
-        for statustext in [x.text for x in c.collections["STATUSTEXT"]]:
+        for x in c.collections["STATUSTEXT"]:
+            self.progress("  statustext=%s vs text=%s" % (x.text, text))
             if regex:
-                if re.match(text, statustext):
-                    return True
-            elif text.lower() in statustext.lower():
-                return True
-        return False
+                if re.match(text, x.text):
+                    return x
+            elif text.lower() in x.text.lower():
+                return x
+        return None
 
     def wait_statustext(self, text, timeout=20, the_function=None, check_context=False, regex=False, wallclock_timeout=False):
-        """Wait for a specific STATUSTEXT."""
+        """Wait for a specific STATUSTEXT, return that statustext message"""
 
         # Statustexts are often triggered by something we've just
         # done, so we have to be careful not to read any traffic that
@@ -5419,24 +5866,31 @@ Also, ignores heartbeats not from our target system'''
         # which checks all incoming messages.
         self.progress("Waiting for text : %s" % text.lower())
         if check_context:
-            if self.statustext_in_collections(text, regex=regex):
+            statustext = self.statustext_in_collections(text, regex=regex)
+            if statustext:
                 self.progress("Found expected text in collection: %s" % text.lower())
-                return
+                return statustext
 
         global statustext_found
+        global statustext_full
+        statustext_full = None
         statustext_found = False
 
         def mh(mav, m):
             global statustext_found
+            global statustext_full
             if m.get_type() != "STATUSTEXT":
                 return
             if regex:
                 self.re_match = re.match(text, m.text)
                 if self.re_match:
                     statustext_found = True
+                    statustext_full = m
             if text.lower() in m.text.lower():
                 self.progress("Received expected text: %s" % m.text.lower())
                 statustext_found = True
+                statustext_full = m
+
         self.install_message_hook(mh)
         if wallclock_timeout:
             tstart = time.time()
@@ -5456,13 +5910,52 @@ Also, ignores heartbeats not from our target system'''
                 self.mav.recv_match(type='STATUSTEXT', blocking=True, timeout=0.1)
         finally:
             self.remove_message_hook(mh)
+        return statustext_full
+
+    # routines helpful for testing LUA scripting:
+    def script_example_source_path(self, scriptname):
+        return os.path.join(self.rootdir(), "libraries", "AP_Scripting", "examples", scriptname)
+
+    def script_test_source_path(self, scriptname):
+        return os.path.join(self.rootdir(), "libraries", "AP_Scripting", "tests", scriptname)
+
+    def installed_script_path(self, scriptname):
+        return os.path.join("scripts", scriptname)
+
+    def install_script(self, source, scriptname):
+        dest = self.installed_script_path(scriptname)
+        destdir = os.path.dirname(dest)
+        if not os.path.exists(destdir):
+            os.mkdir(destdir)
+        self.progress("Copying (%s) to (%s)" % (source, dest))
+        shutil.copy(source, dest)
+
+    def install_example_script(self, scriptname):
+        source = self.script_example_source_path(scriptname)
+        self.install_script(source, scriptname)
+
+    def install_test_script(self, scriptname):
+        source = self.script_test_source_path(scriptname)
+        self.install_script(source, scriptname)
+
+    def remove_example_script(self, scriptname):
+        dest = self.installed_script_path(scriptname)
+        try:
+            os.unlink(dest)
+        except IOError:
+            pass
+        except OSError:
+            pass
 
     def get_mavlink_connection_going(self):
         # get a mavlink connection going
         try:
+            retries = 20
+            if self.gdb:
+                retries = 20000
             self.mav = mavutil.mavlink_connection(
                 self.autotest_connection_string_to_ardupilot(),
-                retries=1000,
+                retries=retries,
                 robust_parsing=True,
                 source_system=250,
                 source_component=250,
@@ -5497,6 +5990,8 @@ Also, ignores heartbeats not from our target system'''
             tests_total_time += test_time
             self.progress(fmt % (desc, test_time))
         self.progress(fmt % ("**--tests_total_time--**", tests_total_time))
+        self.progress("mavproxy_start was called %u times" %
+                      (self.start_mavproxy_count,))
 
     def send_statustext(self, text):
         if sys.version_info.major >= 3 and not isinstance(text, bytes):
@@ -5524,15 +6019,24 @@ Also, ignores heartbeats not from our target system'''
         '''called to move relevant log files from our working directory to the
         buildlogs directory'''
         to_dir = self.logs_dir
+        # move telemetry log files
+        for log in glob.glob("autotest-*.tlog"):
+            bname = os.path.basename(log)
+            newname = os.path.join(to_dir, "%s-%s-%s" % (self.log_name(), name, bname))
+            print("Renaming %s to %s" % (log, newname))
+            shutil.move(log, newname)
         # move binary log files
-        for log in self.bin_logs():
+        for log in sorted(self.bin_logs()):
             bname = os.path.basename(log)
             newname = os.path.join(to_dir, "%s-%s-%s" % (self.log_name(), name, bname))
             print("Renaming %s to %s" % (log, newname))
             shutil.move(log, newname)
         # move core files
         save_binaries = False
-        for log in glob.glob("core*"):
+        corefiles = []
+        corefiles.extend(glob.glob("core*"))
+        corefiles.extend(glob.glob("ap-*.core"))
+        for log in sorted(corefiles):
             bname = os.path.basename(log)
             newname = os.path.join(to_dir, "%s-%s-%s" % (bname, self.log_name(), name))
             print("Renaming %s to %s" % (log, newname))
@@ -5550,7 +6054,7 @@ Also, ignores heartbeats not from our target system'''
             self.progress("Run attempt failed.  Retrying")
         self.run_one_test_attempt(test, interact=interact, attempt=1)
 
-    def print_exception_caught(self, e):
+    def print_exception_caught(self, e, send_statustext=True):
         self.progress("Exception caught: %s" %
                       self.get_exception_stacktrace(e))
         path = None
@@ -5558,7 +6062,12 @@ Also, ignores heartbeats not from our target system'''
             path = self.current_onboard_log_filepath()
         except IndexError:
             pass
-        self.progress("Most recent logfile: %s" % (path, ))
+        self.progress("Most recent logfile: %s" % (path, ), send_statustext=send_statustext)
+
+    def progress_file_content(self, filepath):
+        with open(filepath) as f:
+            for line in f:
+                self.progress(line.rstrip())
 
     def run_one_test_attempt(self, test, interact=False, attempt=1, do_fail_list=True):
         '''called by run_one_test to actually run the test in a retry loop'''
@@ -5574,6 +6083,8 @@ Also, ignores heartbeats not from our target system'''
                                                        (self.log_name(), name))
 
         tee = TeeBoth(test_output_filename, 'w', self.mavproxy_logfile)
+
+        start_num_message_hooks = len(self.mav.message_hooks)
 
         prettyname = "%s (%s)" % (name, desc)
         self.start_test(prettyname)
@@ -5596,14 +6107,46 @@ Also, ignores heartbeats not from our target system'''
             ex = e
         self.test_timings[desc] = time.time() - start_time
         reset_needed = self.contexts[-1].sitl_commandline_customised
-        self.context_pop()
 
         passed = True
         if ex is not None:
             passed = False
 
-        self.wait_heartbeat()
-        if self.armed() and not self.is_tracker():
+        try:
+            self.context_pop()
+        except Exception as e:
+            self.print_exception_caught(e, send_statustext=False)
+            passed = False
+
+        ardupilot_alive = False
+        try:
+            self.wait_heartbeat()
+            ardupilot_alive = True
+        except Exception:
+            # process is dead
+            self.progress("No heartbeat after test", send_statustext=False)
+            if self.sitl.isalive():
+                self.progress("pexpect says it is alive")
+                for tool in "dumpstack.sh", "dumpcore.sh":
+                    tool_filepath = os.path.join(self.rootdir(), 'Tools', 'scripts', tool)
+                    if util.run_cmd([tool_filepath, str(self.sitl.pid)]) != 0:
+                        self.progress("Failed %s" % (tool,))
+                        return False
+            else:
+                self.progress("pexpect says it is dead")
+
+            # try dumping the process status file for more information:
+            status_filepath = "/proc/%u/status" % self.sitl.pid
+            self.progress("Checking for status filepath (%s)" % status_filepath)
+            if os.path.exists(status_filepath):
+                self.progress_file_content(status_filepath)
+            else:
+                self.progress("... does not exist")
+
+            passed = False
+            reset_needed = True
+
+        if ardupilot_alive and self.armed() and not self.is_tracker():
             if ex is None:
                 ex = ArmedAtEndOfTestException("Still armed at end of test")
             self.progress("Armed at end of test; force-rebooting SITL")
@@ -5613,7 +6156,19 @@ Also, ignores heartbeats not from our target system'''
             self.reboot_sitl() # that'll learn it
             passed = False
 
-        corefiles = glob.glob("core*")
+        if self._mavproxy is not None:
+            self.progress("Stopping auto-started mavproxy")
+            if self.use_map:
+                self.mavproxy.send("module unload map\n")
+                self.mavproxy.expect("Unloaded module map")
+
+            self.expect_list_remove(self._mavproxy)
+            util.pexpect_close(self._mavproxy)
+            self._mavproxy = None
+
+        corefiles = []
+        corefiles.extend(glob.glob("core*"))
+        corefiles.extend(glob.glob("ap-*.core"))
         if corefiles:
             self.progress('Corefiles detected: %s' % str(corefiles))
             passed = False
@@ -5621,6 +6176,12 @@ Also, ignores heartbeats not from our target system'''
         if len(self.contexts) != old_contexts_length:
             self.progress("context count mismatch (want=%u got=%u)" %
                           (old_contexts_length, len(self.contexts)))
+            passed = False
+
+        # make sure we don't leave around stray listeners:
+        if len(self.mav.message_hooks) != start_num_message_hooks:
+            self.progress("Stray message listeners: %s" %
+                          str(self.mav.message_hooks))
             passed = False
 
         if passed:
@@ -5641,6 +6202,9 @@ Also, ignores heartbeats not from our target system'''
             if interact:
                 self.progress("Starting MAVProxy interaction as directed")
                 self.mavproxy.interact()
+
+        if self.reset_after_every_test:
+            reset_needed = True
 
         if reset_needed:
             self.reset_SITL_commandline()
@@ -5676,6 +6240,9 @@ Also, ignores heartbeats not from our target system'''
         return None
 
     def start_mavproxy(self):
+        self.start_mavproxy_count += 1
+        if self.mavproxy is not None:
+            return self.mavproxy
         self.progress("Starting MAVProxy")
 
         # determine a good pexpect timeout for reading MAVProxy's
@@ -5684,25 +6251,35 @@ Also, ignores heartbeats not from our target system'''
         if self.valgrind:
             pexpect_timeout *= 10
 
-        self.mavproxy = util.start_MAVProxy_SITL(
+        mavproxy = util.start_MAVProxy_SITL(
             self.vehicleinfo_key(),
             logfile=self.mavproxy_logfile,
             options=self.mavproxy_options(),
             pexpect_timeout=pexpect_timeout)
-        self.mavproxy.expect(r'Telemetry log: (\S+)\r\n')
-        self.logfile = self.mavproxy.match.group(1)
+        mavproxy.expect(r'Telemetry log: (\S+)\r\n')
+        self.logfile = mavproxy.match.group(1)
         self.progress("LOGFILE %s" % self.logfile)
         self.try_symlink_tlog()
 
-#        self.progress("Waiting for Parameters")
-#        self.mavproxy.expect('Received [0-9]+ parameters')
-        self.expect_list_add(self.mavproxy)
+        self.expect_list_add(mavproxy)
+        util.expect_setup_callback(mavproxy, self.expect_callback)
+        self._mavproxy = mavproxy  # so we can clean up after tests....
+        return mavproxy
+
+    def stop_mavproxy(self, mavproxy):
+        if self.mavproxy is not None:
+            return
+        self.progress("Stopping MAVProxy")
+        self.expect_list_remove(mavproxy)
+        util.pexpect_close(mavproxy)
+        self._mavproxy = None
 
     def start_SITL(self, **sitl_args):
         start_sitl_args = {
             "breakpoints": self.breakpoints,
             "disable_breakpoints": self.disable_breakpoints,
             "gdb": self.gdb,
+            "gdb_no_tui": self.gdb_no_tui,
             "gdbserver": self.gdbserver,
             "lldb": self.lldb,
             "home": self.sitl_home(),
@@ -5720,17 +6297,25 @@ Also, ignores heartbeats not from our target system'''
         self.progress("Starting SITL", send_statustext=False)
         self.sitl = util.start_SITL(self.binary, **start_sitl_args)
         self.expect_list_add(self.sitl)
-        if self.sup_binary is not None:
-            self.progress("Starting Supplementary Program")
-            self.sup_prog = util.start_SITL(self.sup_binary, **start_sitl_args)
-            self.expect_list_add(self.sup_prog)
-        else:
-            self.sup_prog = None
+        self.sup_prog = []
+        for sup_binary in self.sup_binaries:
+            self.progress("Starting Supplementary Program ", sup_binary)
+            start_sitl_args["customisations"] = [sup_binary[1]]
+            start_sitl_args["supplementary"] = True
+            sup_prog_link = util.start_SITL(sup_binary[0], **start_sitl_args)
+            self.sup_prog.append(sup_prog_link)
+            self.expect_list_add(sup_prog_link)
+
+    def get_suplementary_programs(self):
+        return self.sup_prog
 
     def sitl_is_running(self):
         if self.sitl is None:
             return False
         return self.sitl.isalive()
+
+    def autostart_mavproxy(self):
+        return self.use_map
 
     def init(self):
         """Initilialize autotest feature."""
@@ -5751,9 +6336,13 @@ Also, ignores heartbeats not from our target system'''
 
         self.progress("Starting MAVLink connection")
         self.get_mavlink_connection_going()
-        self.start_mavproxy()
 
-        util.expect_setup_callback(self.mavproxy, self.expect_callback)
+        if self.autostart_mavproxy():
+            self.mavproxy = self.start_mavproxy()
+
+        self.expect_list_clear()
+        self.expect_list_extend([self.sitl, self.mavproxy])
+        self.expect_list_extend(self.sup_prog)
 
         # need to wait for a heartbeat to arrive as then mavutil will
         # select the correct set of messages for us to receive in
@@ -5762,7 +6351,7 @@ Also, ignores heartbeats not from our target system'''
         # you do this!
         self.wait_heartbeat()
         self.progress("Sim time: %f" % (self.get_sim_time(),))
-        self.apply_defaultfile_parameters()
+        self.apply_default_parameters()
 
         if not self.sitl_is_running():
             # we run this just to make sure exceptions are likely to
@@ -5848,7 +6437,7 @@ Also, ignores heartbeats not from our target system'''
         '''mavlink2 required'''
         target_system = 1
         target_component = 1
-        self.drain_mav_unparsed()
+        self.drain_mav()
         self.progress("Sending mission_request_list")
         tstart = self.get_sim_time()
         self.mav.mav.mission_request_list_send(target_system,
@@ -6224,9 +6813,9 @@ Also, ignores heartbeats not from our target system'''
             self.verify_parameter_values({"COMPASS_ORIENT%d" % count: 0})
 
     def test_mag_calibration(self, compass_count=3, timeout=1000):
-        def reset_pos_and_start_magcal(tmask):
-            self.mavproxy.send("sitl_stop\n")
-            self.mavproxy.send("sitl_attitude 0 0 0\n")
+        def reset_pos_and_start_magcal(mavproxy, tmask):
+            mavproxy.send("sitl_stop\n")
+            mavproxy.send("sitl_attitude 0 0 0\n")
             self.drain_mav()
             self.get_sim_time()
             self.run_cmd(mavutil.mavlink.MAV_CMD_DO_START_MAG_CAL,
@@ -6240,9 +6829,9 @@ Also, ignores heartbeats not from our target system'''
                          want_result=mavutil.mavlink.MAV_RESULT_ACCEPTED,
                          timeout=20,
                          )
-            self.mavproxy.send("sitl_magcal\n")
+            mavproxy.send("sitl_magcal\n")
 
-        def do_prep_mag_cal_test(params):
+        def do_prep_mag_cal_test(mavproxy, params):
             self.progress("Preparing the vehicle for magcal")
             MAG_OFS = 100
             MAG_DIA = 1.0
@@ -6273,14 +6862,14 @@ Also, ignores heartbeats not from our target system'''
             self.progress("Setting calibration mode")
             self.wait_heartbeat()
             self.customise_SITL_commandline(["-M", "calibration"])
-            self.mavproxy_load_module("sitl_calibration")
-            self.mavproxy_load_module("calibration")
-            self.mavproxy_load_module("relay")
+            self.mavproxy_load_module(mavproxy, "sitl_calibration")
+            self.mavproxy_load_module(mavproxy, "calibration")
+            self.mavproxy_load_module(mavproxy, "relay")
             self.wait_statustext("is using GPS", timeout=60)
-            self.mavproxy.send("accelcalsimple\n")
-            self.mavproxy.expect("Calibrated")
+            mavproxy.send("accelcalsimple\n")
+            mavproxy.expect("Calibrated")
             # disable it to not interfert with calibration acceptation
-            self.mavproxy_unload_module("calibration")
+            self.mavproxy_unload_module(mavproxy, "calibration")
             if self.is_copter():
                 # set frame class to pass arming check on copter
                 self.set_parameter("FRAME_CLASS", 1)
@@ -6314,10 +6903,10 @@ Also, ignores heartbeats not from our target system'''
             self.set_parameter("ARMING_CHECK", 4)
 
         #################################################
-        def do_test_mag_cal(params, compass_tnumber):
+        def do_test_mag_cal(mavproxy, params, compass_tnumber):
             self.start_subtest("Try magcal and make it stop around 30%")
             self.progress("Compass mask is %s" % "{0:b}".format(target_mask))
-            reset_pos_and_start_magcal(target_mask)
+            reset_pos_and_start_magcal(mavproxy, target_mask)
             tstart = self.get_sim_time()
             reached_pct = [0] * compass_tnumber
             tstop = None
@@ -6384,7 +6973,7 @@ Also, ignores heartbeats not from our target system'''
             self.progress("Compass mask is %s" % "{0:b}".format(target_mask))
             old_cal_fit = self.get_parameter("COMPASS_CAL_FIT")
             self.set_parameter("COMPASS_CAL_FIT", 0.001, add_to_context=False)
-            reset_pos_and_start_magcal(target_mask)
+            reset_pos_and_start_magcal(mavproxy, target_mask)
             tstart = self.get_sim_time()
             reached_pct = [0] * compass_tnumber
             report_get = [0] * compass_tnumber
@@ -6419,7 +7008,7 @@ Also, ignores heartbeats not from our target system'''
             #################################################
             self.start_subtest("Try magcal and wait success")
             self.progress("Compass mask is %s" % "{0:b}".format(target_mask))
-            reset_pos_and_start_magcal(target_mask)
+            reset_pos_and_start_magcal(mavproxy, target_mask)
             progress_count = [0] * compass_tnumber
             reached_pct = [0] * compass_tnumber
             report_get = [0] * compass_tnumber
@@ -6457,8 +7046,8 @@ Also, ignores heartbeats not from our target system'''
                     if new_pct != reached_pct[cid]:
                         reached_pct[cid] = new_pct
                         self.progress("Calibration progress compass ID %d: %s%%" % (cid, str(reached_pct[cid])))
-            self.mavproxy.send("sitl_stop\n")
-            self.mavproxy.send("sitl_attitude 0 0 0\n")
+            mavproxy.send("sitl_stop\n")
+            mavproxy.send("sitl_attitude 0 0 0\n")
             self.progress("Checking that value aren't changed without acceptation")
             self.check_zero_mag_parameters(params)
             self.check_zeros_mag_orient()
@@ -6508,11 +7097,12 @@ Also, ignores heartbeats not from our target system'''
                          timeout=20,
                          )
             self.disarm_vehicle()
-            self.mavproxy_unload_module("relay")
-            self.mavproxy_unload_module("sitl_calibration")
+            self.mavproxy_unload_module(mavproxy, "relay")
+            self.mavproxy_unload_module(mavproxy, "sitl_calibration")
 
         ex = None
 
+        mavproxy = self.start_mavproxy()
         try:
             self.set_parameter("AHRS_EKF_TYPE", 10)
             self.set_parameter("SIM_GND_BEHAV", 0)
@@ -6528,17 +7118,19 @@ Also, ignores heartbeats not from our target system'''
                 else:
                     target_mask |= (1 << run)
                     ntest_compass = run + 1
-                do_prep_mag_cal_test(curr_params)
-                do_test_mag_cal(curr_params, ntest_compass)
+                do_prep_mag_cal_test(mavproxy, curr_params)
+                do_test_mag_cal(mavproxy, curr_params, ntest_compass)
 
         except Exception as e:
             self.progress("Caught exception: %s" %
                           self.get_exception_stacktrace(e))
             ex = e
-            self.mavproxy_unload_module("relay")
-            self.mavproxy_unload_module("sitl_calibration")
+            self.mavproxy_unload_module(mavproxy, "relay")
+            self.mavproxy_unload_module(mavproxy, "sitl_calibration")
         if ex is not None:
             raise ex
+
+        self.stop_mavproxy(mavproxy)
 
         # need to reboot SITL after moving away from EKF type 10; we
         # can end up with home set but origin not and that will lead
@@ -6799,16 +7391,17 @@ Also, ignores heartbeats not from our target system'''
     def test_dataflash_over_mavlink(self):
         self.context_push()
         ex = None
+        mavproxy = self.start_mavproxy()
         try:
             self.set_parameter("LOG_BACKEND_TYPE", 2)
             self.reboot_sitl()
             self.wait_ready_to_arm(check_prearm_bit=False)
-            self.mavproxy.send('arm throttle\n')
-            self.mavproxy.expect('PreArm: Logging failed')
-            self.mavproxy.send("module load dataflash_logger\n")
-            self.mavproxy.send("dataflash_logger set verbose 1\n")
-            self.mavproxy.expect('logging started')
-            self.mavproxy.send("dataflash_logger set verbose 0\n")
+            mavproxy.send('arm throttle\n')
+            mavproxy.expect('PreArm: Logging failed')
+            mavproxy.send("module load dataflash_logger\n")
+            mavproxy.send("dataflash_logger set verbose 1\n")
+            mavproxy.expect('logging started')
+            mavproxy.send("dataflash_logger set verbose 0\n")
             self.delay_sim_time(1)
             self.do_timesync_roundtrip()  # drain COMMAND_ACK from that failed arm
             self.arm_vehicle()
@@ -6820,10 +7413,10 @@ Also, ignores heartbeats not from our target system'''
                     break
                 if now - last_status > 5:
                     last_status = now
-                    self.mavproxy.send('dataflash_logger status\n')
+                    mavproxy.send('dataflash_logger status\n')
                     # seen on autotest: Active Rate(3s):97.790kB/s Block:164 Missing:0 Fixed:0 Abandoned:0
-                    self.mavproxy.expect(r"Active Rate\([0-9]+s\):([0-9]+[.][0-9]+)")
-                    rate = float(self.mavproxy.match.group(1))
+                    mavproxy.expect(r"Active Rate\([0-9]+s\):([0-9]+[.][0-9]+)")
+                    rate = float(mavproxy.match.group(1))
                     self.progress("Rate: %f" % rate)
                     desired_rate = 50
                     if self.valgrind:
@@ -6836,8 +7429,9 @@ Also, ignores heartbeats not from our target system'''
             self.disarm_vehicle()
             ex = e
         self.context_pop()
-        self.mavproxy.send("module unload dataflash_logger\n")
-        self.mavproxy.expect("Unloaded module dataflash_logger")
+        mavproxy.send("module unload dataflash_logger\n")
+        mavproxy.expect("Unloaded module dataflash_logger")
+        self.stop_mavproxy(mavproxy)
         self.reboot_sitl()
         if ex is not None:
             raise ex
@@ -6846,14 +7440,15 @@ Also, ignores heartbeats not from our target system'''
         """Test the basic functionality of block logging"""
         self.context_push()
         ex = None
+        mavproxy = self.start_mavproxy()
         try:
             self.set_parameter("LOG_BACKEND_TYPE", 4)
             self.set_parameter("LOG_FILE_DSRMROT", 1)
             self.reboot_sitl()
             # First log created here, but we are in chip erase so ignored
-            self.mavproxy.send("module load log\n")
-            self.mavproxy.send("log erase\n")
-            self.mavproxy.expect("Chip erase complete")
+            mavproxy.send("module load log\n")
+            mavproxy.send("log erase\n")
+            mavproxy.expect("Chip erase complete")
 
             self.wait_ready_to_arm()
             if self.is_copter() or self.is_plane():
@@ -6868,12 +7463,12 @@ Also, ignores heartbeats not from our target system'''
             self.disarm_vehicle()
             # Second log created here
             self.delay_sim_time(2)
-            self.mavproxy.send("log list\n")
-            self.mavproxy.expect("Log ([0-9]+)  numLogs ([0-9]+) lastLog ([0-9]+) size ([0-9]+)", timeout=120)
-            log_num = int(self.mavproxy.match.group(1))
-            numlogs = int(self.mavproxy.match.group(2))
-            lastlog = int(self.mavproxy.match.group(3))
-            size = int(self.mavproxy.match.group(4))
+            mavproxy.send("log list\n")
+            mavproxy.expect("Log ([0-9]+)  numLogs ([0-9]+) lastLog ([0-9]+) size ([0-9]+)", timeout=120)
+            log_num = int(mavproxy.match.group(1))
+            numlogs = int(mavproxy.match.group(2))
+            lastlog = int(mavproxy.match.group(3))
+            size = int(mavproxy.match.group(4))
             if numlogs != 2 or log_num != 1 or size <= 0:
                 raise NotAchievedException("Unexpected log information %d %d %d" % (log_num, numlogs, lastlog))
             self.progress("Log size: %d" % size)
@@ -6881,23 +7476,24 @@ Also, ignores heartbeats not from our target system'''
             # This starts a new log with a time of 0, wait for arm so that we can insert the correct time
             self.wait_ready_to_arm()
             # Third log created here
-            self.mavproxy.send("log list\n")
-            self.mavproxy.expect("Log 1  numLogs 3 lastLog 3 size")
+            mavproxy.send("log list\n")
+            mavproxy.expect("Log 1  numLogs 3 lastLog 3 size")
 
             # Download second and third logs
-            self.mavproxy.send("log download 2 logs/dataflash-log-002.BIN\n")
-            self.mavproxy.expect("Finished downloading", timeout=120)
-            self.mavproxy.send("log download 3 logs/dataflash-log-003.BIN\n")
-            self.mavproxy.expect("Finished downloading", timeout=120)
+            mavproxy.send("log download 2 logs/dataflash-log-002.BIN\n")
+            mavproxy.expect("Finished downloading", timeout=120)
+            mavproxy.send("log download 3 logs/dataflash-log-003.BIN\n")
+            mavproxy.expect("Finished downloading", timeout=120)
 
             # Erase the logs
-            self.mavproxy.send("log erase\n")
-            self.mavproxy.expect("Chip erase complete")
+            mavproxy.send("log erase\n")
+            mavproxy.expect("Chip erase complete")
 
         except Exception as e:
             self.print_exception_caught(e)
             ex = e
-        self.mavproxy.send("module unload log\n")
+        mavproxy.send("module unload log\n")
+        self.stop_mavproxy(mavproxy)
         self.context_pop()
         self.reboot_sitl()
         if ex is not None:
@@ -6938,19 +7534,21 @@ Also, ignores heartbeats not from our target system'''
 
     def test_dataflash_erase(self):
         """Test that erasing the dataflash chip and creating a new log is error free"""
+        mavproxy = self.start_mavproxy()
+
         ex = None
         self.context_push()
         try:
             self.set_parameter("LOG_BACKEND_TYPE", 4)
             self.reboot_sitl()
-            self.mavproxy.send("module load log\n")
-            self.mavproxy.send("log erase\n")
-            self.mavproxy.expect("Chip erase complete")
+            mavproxy.send("module load log\n")
+            mavproxy.send("log erase\n")
+            mavproxy.expect("Chip erase complete")
             self.set_parameter("LOG_DISARMED", 1)
             self.delay_sim_time(3)
             self.set_parameter("LOG_DISARMED", 0)
-            self.mavproxy.send("log download 1 logs/dataflash-log-erase.BIN\n")
-            self.mavproxy.expect("Finished downloading", timeout=120)
+            mavproxy.send("log download 1 logs/dataflash-log-erase.BIN\n")
+            mavproxy.expect("Finished downloading", timeout=120)
             # read the downloaded log - it must parse without error
             self.validate_log_file("logs/dataflash-log-erase.BIN")
 
@@ -6974,41 +7572,45 @@ Also, ignores heartbeats not from our target system'''
             self.disarm_vehicle()
             # make sure we have finished logging
             self.delay_sim_time(15)
-            self.mavproxy.send("log list\n")
+            mavproxy.send("log list\n")
             try:
-                self.mavproxy.expect("Log ([0-9]+)  numLogs ([0-9]+) lastLog ([0-9]+) size ([0-9]+)", timeout=120)
+                mavproxy.expect("Log ([0-9]+)  numLogs ([0-9]+) lastLog ([0-9]+) size ([0-9]+)", timeout=120)
             except pexpect.TIMEOUT as e:
                 if self.sitl_is_running():
                     self.progress("SITL is running")
                 else:
                     self.progress("SITL is NOT running")
                 raise NotAchievedException("Received %s" % str(e))
-            if int(self.mavproxy.match.group(2)) != 3:
-                raise NotAchievedException("Expected 3 logs got %s" % (self.mavproxy.match.group(2)))
+            if int(mavproxy.match.group(2)) != 3:
+                raise NotAchievedException("Expected 3 logs got %s" % (mavproxy.match.group(2)))
 
-            self.mavproxy.send("log download 1 logs/dataflash-log-erase2.BIN\n")
-            self.mavproxy.expect("Finished downloading", timeout=120)
+            mavproxy.send("log download 1 logs/dataflash-log-erase2.BIN\n")
+            mavproxy.expect("Finished downloading", timeout=120)
             self.validate_log_file("logs/dataflash-log-erase2.BIN", 1)
 
-            self.mavproxy.send("log download latest logs/dataflash-log-erase3.BIN\n")
-            self.mavproxy.expect("Finished downloading", timeout=120)
+            mavproxy.send("log download latest logs/dataflash-log-erase3.BIN\n")
+            mavproxy.expect("Finished downloading", timeout=120)
             self.validate_log_file("logs/dataflash-log-erase3.BIN", 1)
 
             # clean up
-            self.mavproxy.send("log erase\n")
-            self.mavproxy.expect("Chip erase complete")
+            mavproxy.send("log erase\n")
+            mavproxy.expect("Chip erase complete")
 
             # clean up
-            self.mavproxy.send("log erase\n")
-            self.mavproxy.expect("Chip erase complete")
+            mavproxy.send("log erase\n")
+            mavproxy.expect("Chip erase complete")
 
         except Exception as e:
             self.print_exception_caught(e)
             ex = e
 
-        self.mavproxy.send("module unload log\n")
+        mavproxy.send("module unload log\n")
+
         self.context_pop()
         self.reboot_sitl()
+
+        self.stop_mavproxy(mavproxy)
+
         if ex is not None:
             raise ex
 
@@ -7039,34 +7641,32 @@ Also, ignores heartbeats not from our target system'''
         if not self.disarm_vehicle():
             raise NotAchievedException("Failed to DISARM")
         self.progress("arm with mavproxy")
-        if not self.mavproxy_arm_vehicle():
+        mavproxy = self.start_mavproxy()
+        if not self.mavproxy_arm_vehicle(mavproxy):
             raise NotAchievedException("Failed to ARM")
         self.progress("disarm with mavproxy")
-        if not self.mavproxy_disarm_vehicle():
+        if not self.mavproxy_disarm_vehicle(mavproxy):
             raise NotAchievedException("Failed to DISARM")
+        self.stop_mavproxy(mavproxy)
 
         if not self.is_sub():
             self.start_subtest("Test arm with rc input")
-            if not self.arm_motors_with_rc_input():
-                raise NotAchievedException("Failed to arm with RC input")
+            self.arm_motors_with_rc_input()
             self.progress("disarm with rc input")
             if self.is_balancebot():
                 self.progress("balancebot can't disarm with RC input")
                 self.disarm_vehicle()
             else:
-                if not self.disarm_motors_with_rc_input():
-                    raise NotAchievedException("Failed to disarm with RC input")
+                self.disarm_motors_with_rc_input()
 
             self.start_subtest("Test arm and disarm with switch")
             arming_switch = 7
-            self.set_parameter("RC%d_OPTION" % arming_switch, 41)
+            self.set_parameter("RC%d_OPTION" % arming_switch, 153)
             self.set_rc(arming_switch, 1000)
             # delay so a transition is seen by the RC switch code:
             self.delay_sim_time(0.5)
-            if not self.arm_motors_with_switch(arming_switch):
-                raise NotAchievedException("Failed to arm with switch")
-            if not self.disarm_motors_with_switch(arming_switch):
-                raise NotAchievedException("Failed to disarm with switch")
+            self.arm_motors_with_switch(arming_switch)
+            self.disarm_motors_with_switch(arming_switch)
             self.set_rc(arming_switch, 1000)
 
             if self.is_copter():
@@ -7077,10 +7677,18 @@ Also, ignores heartbeats not from our target system'''
                         raise NotAchievedException("Armed when throttle too high")
                 except ValueError:
                     pass
-                if self.arm_motors_with_rc_input():
+                try:
+                    self.arm_motors_with_rc_input()
+                except NotAchievedException:
+                    pass
+                if self.armed():
                     raise NotAchievedException(
                         "Armed via RC when throttle too high")
-                if self.arm_motors_with_switch(arming_switch):
+                try:
+                    self.arm_motors_with_switch(arming_switch)
+                except NotAchievedException:
+                    pass
+                if self.armed():
                     raise NotAchievedException("Armed via RC when switch too high")
                 self.zero_throttle()
                 self.set_rc(arming_switch, 1000)
@@ -7088,12 +7696,20 @@ Also, ignores heartbeats not from our target system'''
             # Sub doesn't have 'stick commands'
             self.start_subtest("Test arming failure with ARMING_RUDDER=0")
             self.set_parameter("ARMING_RUDDER", 0)
-            if self.arm_motors_with_rc_input():
+            try:
+                self.arm_motors_with_rc_input()
+            except NotAchievedException:
+                pass
+            if self.armed():
                 raise NotAchievedException(
                     "Armed with rudder when ARMING_RUDDER=0")
             self.start_subtest("Test disarming failure with ARMING_RUDDER=0")
             self.arm_vehicle()
-            if self.disarm_motors_with_rc_input(watch_for_disabled=True):
+            try:
+                self.disarm_motors_with_rc_input(watch_for_disabled=True)
+            except NotAchievedException:
+                pass
+            if not self.armed():
                 raise NotAchievedException(
                     "Disarmed with rudder when ARMING_RUDDER=0")
             self.disarm_vehicle()
@@ -7101,7 +7717,11 @@ Also, ignores heartbeats not from our target system'''
             self.start_subtest("Test disarming failure with ARMING_RUDDER=1")
             self.set_parameter("ARMING_RUDDER", 1)
             self.arm_vehicle()
-            if self.disarm_motors_with_rc_input():
+            try:
+                self.disarm_motors_with_rc_input()
+            except NotAchievedException:
+                pass
+            if not self.armed():
                 raise NotAchievedException(
                     "Disarmed with rudder with ARMING_RUDDER=1")
             self.disarm_vehicle()
@@ -7111,12 +7731,19 @@ Also, ignores heartbeats not from our target system'''
             if self.is_copter():
                 self.start_subtest("Test arming failure with interlock enabled")
                 self.set_rc(interlock_channel, 2000)
-                if self.arm_motors_with_rc_input():
+                try:
+                    self.arm_motors_with_rc_input()
+                except NotAchievedException:
+                    pass
+                if self.armed():
                     raise NotAchievedException(
                         "Armed with RC input when interlock enabled")
-                if self.arm_motors_with_switch(arming_switch):
-                    raise NotAchievedException(
-                        "Armed with switch when interlock enabled")
+                try:
+                    self.arm_motors_with_switch(arming_switch)
+                except NotAchievedException:
+                    pass
+                if self.armed():
+                    raise NotAchievedException("Armed with switch when interlock enabled")
                 self.disarm_vehicle()
                 self.wait_heartbeat()
                 self.set_rc(arming_switch, 1000)
@@ -7342,6 +7969,43 @@ Also, ignores heartbeats not from our target system'''
             raise NotAchievedException("Expected ACCEPTED for reading message interval")
 
     def test_set_message_interval(self):
+        self.start_subtest('Basic tests')
+        self.test_set_message_interval_basic()
+        self.start_subtest('Many-message tests')
+        self.test_set_message_interval_many()
+
+    def test_set_message_interval_many(self):
+        messages = [
+            'CAMERA_FEEDBACK',
+            'RAW_IMU',
+            'ATTITUDE',
+        ]
+        ex = None
+        try:
+            rate = 5
+            for message in messages:
+                self.set_message_rate_hz(message, rate)
+            for message in messages:
+                self.assert_message_rate_hz(message, rate)
+        except Exception as e:
+            self.print_exception_caught(e)
+            ex = e
+
+        # reset message rates to default:
+        for message in messages:
+            self.set_message_rate_hz(message, -1)
+
+        if ex is not None:
+            raise ex
+
+    def assert_message_rate_hz(self, message, want_rate, sample_period=20):
+        self.drain_mav()
+        rate = round(self.get_message_rate(message, sample_period))
+        self.progress("%s: Want=%u got=%u" % (message, want_rate, rate))
+        if rate != want_rate:
+            raise NotAchievedException("Did not get expected rate (want=%u got=%u" % (want_rate, rate))
+
+    def test_set_message_interval_basic(self):
         self.victim_message = 'VFR_HUD'
         self.victim_message_id = mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD
         ex = None
@@ -7363,11 +8027,7 @@ Also, ignores heartbeats not from our target system'''
             for want_rate in range(5, 14):
                 self.set_message_rate_hz(mavutil.mavlink.MAVLINK_MSG_ID_CAMERA_FEEDBACK,
                                          want_rate)
-                self.drain_mav()
-                rate = round(self.get_message_rate("CAMERA_FEEDBACK", 20))
-                self.progress("Want=%u got=%u" % (want_rate, rate))
-                if rate != want_rate:
-                    raise NotAchievedException("Did not get expected rate (want=%u got=%u" % (want_rate, rate))
+                self.assert_message_rate_hz('CAMERA_FEEDBACK', want_rate)
 
             self.progress("try at the main loop rate")
             # have to reset the speedup as MAVProxy can't keep up otherwise
@@ -7404,22 +8064,32 @@ Also, ignores heartbeats not from our target system'''
         if ex is not None:
             raise ex
 
+    def send_poll_message(self, message_id, target_sysid=None, target_compid=None):
+        if type(message_id) == str:
+            message_id = eval("mavutil.mavlink.MAVLINK_MSG_ID_%s" % message_id)
+        self.send_cmd(mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE,
+                      message_id,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      target_sysid=target_sysid,
+                      target_compid=target_compid)
+
     def poll_message(self, message_id, timeout=10):
         if type(message_id) == str:
             message_id = eval("mavutil.mavlink.MAVLINK_MSG_ID_%s" % message_id)
-        # temporarily use a constant in place of
-        # mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE until we have a
-        # pymavlink release:
-        tstart = self.get_sim_time()
-        self.run_cmd(mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE,
-                     message_id,
-                     0,
-                     0,
-                     0,
-                     0,
-                     0,
-                     0,
-                     timeout=timeout)
+        self.drain_mav()
+        tstart = self.get_sim_time() # required for timeout in run_cmd_get_ack to work
+        self.send_poll_message(message_id)
+        self.run_cmd_get_ack(
+            mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE,
+            mavutil.mavlink.MAV_RESULT_ACCEPTED,
+            timeout,
+            quiet=False
+        )
         while True:
             if self.get_sim_time_cached() - tstart > timeout:
                 raise NotAchievedException("Did not receive polled message")
@@ -7430,6 +8100,28 @@ Also, ignores heartbeats not from our target system'''
             if m.id != message_id:
                 continue
             return m
+
+    def get_messages_frame(self, msg_names):
+        '''try to get a "frame" of named messages - a set of messages as close
+        in time as possible'''
+        msgs = {}
+
+        def get_msgs(mav, m):
+            t = m.get_type()
+            if t in msg_names:
+                msgs[t] = m
+        self.do_timesync_roundtrip()
+        self.install_message_hook(get_msgs)
+        for msg_name in msg_names:
+            self.send_poll_message(msg_name)
+        while True:
+            self.mav.recv_match(blocking=True)
+            if len(msgs.keys()) == len(msg_names):
+                break
+
+        self.remove_message_hook(get_msgs)
+
+        return msgs
 
     def test_request_message(self, timeout=60):
         rate = round(self.get_message_rate("CAMERA_FEEDBACK", 10))
@@ -7475,8 +8167,8 @@ Also, ignores heartbeats not from our target system'''
         if mission_type == mavutil.mavlink.MAV_MISSION_TYPE_MISSION:
             self.last_wp_load = time.time()
 
-    def clear_fence_using_mavproxy(self, timeout=10):
-        self.mavproxy.send("fence clear\n")
+    def clear_fence_using_mavproxy(self, mavproxy, timeout=10):
+        mavproxy.send("fence clear\n")
         tstart = self.get_sim_time_cached()
         while True:
             now = self.get_sim_time_cached()
@@ -7488,15 +8180,6 @@ Also, ignores heartbeats not from our target system'''
     def clear_fence(self):
         self.clear_mission(mavutil.mavlink.MAV_MISSION_TYPE_FENCE)
 
-    def clear_mission_using_mavproxy(self):
-        self.mavproxy.send("wp clear\n")
-        self.mavproxy.send('wp list\n')
-        self.mavproxy.expect('Requesting [0-9]+ waypoints')
-        num_wp = mavwp.MAVWPLoader().count()
-        if num_wp != 0:
-            raise NotAchievedException("Failed to clear mission")
-        self.last_wp_load = time.time()
-
     def test_config_error_loop(self):
         '''test the sensor config error loop works and that parameter sets are persistent'''
         parameter_name = "SERVO8_MIN"
@@ -7506,7 +8189,7 @@ Also, ignores heartbeats not from our target system'''
         ex = None
         try:
             self.set_parameter("STAT_BOOTCNT", 0)
-            self.set_parameter("SIM_BARO_COUNT", 0)
+            self.set_parameter("SIM_BARO_COUNT", -1)
 
             if self.is_tracker():
                 # starts armed...
@@ -7515,7 +8198,8 @@ Also, ignores heartbeats not from our target system'''
 
             self.reboot_sitl(required_bootcount=1)
             self.progress("Waiting for 'Config error'")
-            self.wait_statustext("Config error")
+            # SYSTEM_TIME not sent in config error loop:
+            self.wait_statustext("Config error", wallclock_timeout=True)
             self.progress("Setting %s to %f" % (parameter_name, new_parameter_value))
             self.set_parameter(parameter_name, new_parameter_value)
         except Exception as e:
@@ -7660,6 +8344,7 @@ Also, ignores heartbeats not from our target system'''
     def test_set_position_global_int(self, timeout=100):
         """Test set position message in guided mode."""
         # Disable heading and yaw test on rover type
+
         if self.is_rover():
             test_alt = False
             test_heading = False
@@ -7668,6 +8353,11 @@ Also, ignores heartbeats not from our target system'''
             test_alt = True
             test_heading = True
             test_yaw_rate = True
+
+        # we must start mavproxy here as otherwise we can't get the
+        # terrain database tiles - this leads to random failures in
+        # CI!
+        mavproxy = self.start_mavproxy()
 
         self.set_parameter("FS_GCS_ENABLE", 0)
         self.change_mode("GUIDED")
@@ -7703,11 +8393,10 @@ Also, ignores heartbeats not from our target system'''
                 self.sysid_thismav(),  # target system_id
                 1,  # target component id
                 mav_frame,
-                MAVLINK_SET_POS_TYPE_MASK_VEL_IGNORE |
-                MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE |
-                MAVLINK_SET_POS_TYPE_MASK_FORCE |
-                MAVLINK_SET_POS_TYPE_MASK_YAW_IGNORE |
-                MAVLINK_SET_POS_TYPE_MASK_YAW_RATE_IGNORE,
+                MAV_POS_TARGET_TYPE_MASK.VEL_IGNORE |
+                MAV_POS_TARGET_TYPE_MASK.ACC_IGNORE |
+                MAV_POS_TARGET_TYPE_MASK.YAW_IGNORE |
+                MAV_POS_TARGET_TYPE_MASK.YAW_RATE_IGNORE,
                 int(lat * 1.0e7),  # lat
                 int(lng * 1.0e7),  # lon
                 alt,  # alt
@@ -7723,7 +8412,7 @@ Also, ignores heartbeats not from our target system'''
 
         for frame in MAV_FRAMES_TO_TEST:
             frame_name = mavutil.mavlink.enums["MAV_FRAME"][frame].name
-            self.start_test("Testing Set Position in %s" % frame_name)
+            self.start_subtest("Testing Set Position in %s" % frame_name)
             self.start_subtest("Changing Latitude")
             targetpos.lat += 0.0001
             if test_alt:
@@ -7761,8 +8450,8 @@ Also, ignores heartbeats not from our target system'''
                                height_accuracy=2, minimum_duration=2)
 
             if test_heading:
-                self.start_test("Testing Yaw targetting in %s" % frame_name)
-                self.start_subtest("Changing Latitude and Heading")
+                self.start_subtest("Testing Yaw targetting in %s" % frame_name)
+                self.progress("Changing Latitude and Heading")
                 targetpos.lat += 0.0001
                 if test_alt:
                     targetpos.alt += 5
@@ -7771,10 +8460,9 @@ Also, ignores heartbeats not from our target system'''
                     self.sysid_thismav(),  # target system_id
                     1,  # target component id
                     frame,
-                    MAVLINK_SET_POS_TYPE_MASK_VEL_IGNORE |
-                    MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE |
-                    MAVLINK_SET_POS_TYPE_MASK_FORCE |
-                    MAVLINK_SET_POS_TYPE_MASK_YAW_RATE_IGNORE,
+                    MAV_POS_TARGET_TYPE_MASK.VEL_IGNORE |
+                    MAV_POS_TARGET_TYPE_MASK.ACC_IGNORE |
+                    MAV_POS_TARGET_TYPE_MASK.YAW_RATE_IGNORE,
                     int(targetpos.lat * 1.0e7),  # lat
                     int(targetpos.lng * 1.0e7),  # lon
                     to_alt_frame(targetpos.alt, frame_name),  # alt
@@ -7801,10 +8489,9 @@ Also, ignores heartbeats not from our target system'''
                     self.sysid_thismav(),  # target system_id
                     1,  # target component id
                     frame,
-                    MAVLINK_SET_POS_TYPE_MASK_VEL_IGNORE |
-                    MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE |
-                    MAVLINK_SET_POS_TYPE_MASK_FORCE |
-                    MAVLINK_SET_POS_TYPE_MASK_YAW_RATE_IGNORE,
+                    MAV_POS_TARGET_TYPE_MASK.VEL_IGNORE |
+                    MAV_POS_TARGET_TYPE_MASK.ACC_IGNORE |
+                    MAV_POS_TARGET_TYPE_MASK.YAW_RATE_IGNORE,
                     int(targetpos.lat * 1.0e7),  # lat
                     int(targetpos.lng * 1.0e7),  # lon
                     to_alt_frame(targetpos.alt, frame_name),  # alt
@@ -7823,7 +8510,7 @@ Also, ignores heartbeats not from our target system'''
                 self.wait_heading(0, minimum_duration=5, timeout=timeout)
 
             if test_yaw_rate:
-                self.start_test("Testing Yaw Rate targetting in %s" % frame_name)
+                self.start_subtest("Testing Yaw Rate targetting in %s" % frame_name)
 
                 def send_yaw_rate(rate, target=None):
                     self.mav.mav.set_position_target_global_int_send(
@@ -7831,10 +8518,9 @@ Also, ignores heartbeats not from our target system'''
                         self.sysid_thismav(),  # target system_id
                         1,  # target component id
                         frame,
-                        MAVLINK_SET_POS_TYPE_MASK_VEL_IGNORE |
-                        MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE |
-                        MAVLINK_SET_POS_TYPE_MASK_FORCE |
-                        MAVLINK_SET_POS_TYPE_MASK_YAW_IGNORE,
+                        MAV_POS_TARGET_TYPE_MASK.VEL_IGNORE |
+                        MAV_POS_TARGET_TYPE_MASK.ACC_IGNORE |
+                        MAV_POS_TARGET_TYPE_MASK.YAW_IGNORE,
                         int(targetpos.lat * 1.0e7),  # lat
                         int(targetpos.lng * 1.0e7),  # lon
                         to_alt_frame(targetpos.alt, frame_name),  # alt
@@ -7876,7 +8562,10 @@ Also, ignores heartbeats not from our target system'''
                 self.wait_yaw_speed(target_rate, timeout=timeout,
                                     called_function=lambda plop, empty: send_yaw_rate(
                                         target_rate, None), minimum_duration=5)
-        self.start_test("Getting back to home and disarm")
+
+        self.stop_mavproxy(mavproxy)
+
+        self.progress("Getting back to home and disarm")
         self.do_RTL(distance_min=0, distance_max=wp_accuracy)
         self.disarm_vehicle()
 
@@ -7891,6 +8580,11 @@ Also, ignores heartbeats not from our target system'''
             test_vz = True
             test_heading = True
             test_yaw_rate = True
+
+        # we must start mavproxy here as otherwise we can't get the
+        # terrain database tiles - this leads to random failures in
+        # CI!
+        mavproxy = self.start_mavproxy()
 
         self.set_parameter("FS_GCS_ENABLE", 0)
         self.change_mode("GUIDED")
@@ -7917,11 +8611,10 @@ Also, ignores heartbeats not from our target system'''
                 self.sysid_thismav(),  # target system_id
                 1,  # target component id
                 mav_frame,
-                MAVLINK_SET_POS_TYPE_MASK_POS_IGNORE |
-                MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE |
-                MAVLINK_SET_POS_TYPE_MASK_FORCE |
-                MAVLINK_SET_POS_TYPE_MASK_YAW_IGNORE |
-                MAVLINK_SET_POS_TYPE_MASK_YAW_RATE_IGNORE,
+                MAV_POS_TARGET_TYPE_MASK.POS_IGNORE |
+                MAV_POS_TARGET_TYPE_MASK.ACC_IGNORE |
+                MAV_POS_TARGET_TYPE_MASK.YAW_IGNORE |
+                MAV_POS_TARGET_TYPE_MASK.YAW_RATE_IGNORE,
                 0,
                 0,
                 0,
@@ -7937,8 +8630,8 @@ Also, ignores heartbeats not from our target system'''
 
         for frame in MAV_FRAMES_TO_TEST:
             frame_name = mavutil.mavlink.enums["MAV_FRAME"][frame].name
-            self.start_test("Testing Set Velocity in %s" % frame_name)
-            self.start_subtest("Changing Vx speed")
+            self.start_subtest("Testing Set Velocity in %s" % frame_name)
+            self.progress("Changing Vx speed")
             self.wait_speed_vector(
                 target_speed,
                 timeout=timeout,
@@ -8007,7 +8700,7 @@ Also, ignores heartbeats not from our target system'''
             )
 
             if test_heading:
-                self.start_test("Testing Yaw targetting in %s" % frame_name)
+                self.start_subtest("Testing Yaw targetting in %s" % frame_name)
 
                 def send_yaw_target(yaw, mav_frame):
                     self.mav.mav.set_position_target_global_int_send(
@@ -8015,10 +8708,9 @@ Also, ignores heartbeats not from our target system'''
                         self.sysid_thismav(),  # target system_id
                         1,  # target component id
                         mav_frame,
-                        MAVLINK_SET_POS_TYPE_MASK_POS_IGNORE |
-                        MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE |
-                        MAVLINK_SET_POS_TYPE_MASK_FORCE |
-                        MAVLINK_SET_POS_TYPE_MASK_YAW_RATE_IGNORE,
+                        MAV_POS_TARGET_TYPE_MASK.POS_IGNORE |
+                        MAV_POS_TARGET_TYPE_MASK.ACC_IGNORE |
+                        MAV_POS_TARGET_TYPE_MASK.YAW_RATE_IGNORE,
                         0,
                         0,
                         0,
@@ -8045,10 +8737,9 @@ Also, ignores heartbeats not from our target system'''
                         self.sysid_thismav(),  # target system_id
                         1,  # target component id
                         mav_frame,
-                        MAVLINK_SET_POS_TYPE_MASK_POS_IGNORE |
-                        MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE |
-                        MAVLINK_SET_POS_TYPE_MASK_FORCE |
-                        MAVLINK_SET_POS_TYPE_MASK_YAW_RATE_IGNORE,
+                        MAV_POS_TARGET_TYPE_MASK.POS_IGNORE |
+                        MAV_POS_TARGET_TYPE_MASK.ACC_IGNORE |
+                        MAV_POS_TARGET_TYPE_MASK.YAW_RATE_IGNORE,
                         0,
                         0,
                         0,
@@ -8106,7 +8797,7 @@ Also, ignores heartbeats not from our target system'''
                 )
 
             if test_yaw_rate:
-                self.start_test("Testing Yaw Rate targetting in %s" % frame_name)
+                self.start_subtest("Testing Yaw Rate targetting in %s" % frame_name)
 
                 def send_yaw_rate(rate, mav_frame):
                     self.mav.mav.set_position_target_global_int_send(
@@ -8114,10 +8805,9 @@ Also, ignores heartbeats not from our target system'''
                         self.sysid_thismav(),  # target system_id
                         1,  # target component id
                         mav_frame,
-                        MAVLINK_SET_POS_TYPE_MASK_POS_IGNORE |
-                        MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE |
-                        MAVLINK_SET_POS_TYPE_MASK_FORCE |
-                        MAVLINK_SET_POS_TYPE_MASK_YAW_IGNORE,
+                        MAV_POS_TARGET_TYPE_MASK.POS_IGNORE |
+                        MAV_POS_TARGET_TYPE_MASK.ACC_IGNORE |
+                        MAV_POS_TARGET_TYPE_MASK.YAW_IGNORE,
                         0,
                         0,
                         0,
@@ -8144,10 +8834,9 @@ Also, ignores heartbeats not from our target system'''
                         self.sysid_thismav(),  # target system_id
                         1,  # target component id
                         mav_frame,
-                        MAVLINK_SET_POS_TYPE_MASK_POS_IGNORE |
-                        MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE |
-                        MAVLINK_SET_POS_TYPE_MASK_FORCE |
-                        MAVLINK_SET_POS_TYPE_MASK_YAW_IGNORE,
+                        MAV_POS_TARGET_TYPE_MASK.POS_IGNORE |
+                        MAV_POS_TARGET_TYPE_MASK.ACC_IGNORE |
+                        MAV_POS_TARGET_TYPE_MASK.YAW_IGNORE,
                         0,
                         0,
                         0,
@@ -8240,7 +8929,10 @@ Also, ignores heartbeats not from our target system'''
                                                                    frame),
                     minimum_duration=2
                 )
-        self.start_test("Getting back to home and disarm")
+
+        self.stop_mavproxy(mavproxy)
+
+        self.progress("Getting back to home and disarm")
         self.do_RTL(distance_min=0, distance_max=wp_accuracy)
         self.disarm_vehicle()
 
@@ -8327,8 +9019,7 @@ Also, ignores heartbeats not from our target system'''
                 seq += 1
                 items.append(item)
 
-        self.upload_using_mission_protocol(mavutil.mavlink.MAV_MISSION_TYPE_FENCE,
-                                           items)
+        self.check_fence_upload_download(items)
 
     def wait_for_initial_mode(self):
         '''wait until we get a heartbeat with an expected initial mode (the
@@ -8373,20 +9064,22 @@ switch value'''
 
     def last_onboard_log(self):
         '''return number of last onboard log'''
-        self.mavproxy.send("module load log\n")
+        mavproxy = self.start_mavproxy()
+        mavproxy.send("module load log\n")
         loaded_module = False
-        self.mavproxy.expect(["Loaded module log", "module log already loaded"])
-        if self.mavproxy.match.group(0) == "Loaded module log":
+        mavproxy.expect(["Loaded module log", "module log already loaded"])
+        if mavproxy.match.group(0) == "Loaded module log":
             loaded_module = True
-        self.mavproxy.send("log list\n")
-        self.mavproxy.expect(["lastLog ([0-9]+)", "No logs"])
-        if self.mavproxy.match.group(0) == "No logs":
+        mavproxy.send("log list\n")
+        mavproxy.expect(["lastLog ([0-9]+)", "No logs"])
+        if mavproxy.match.group(0) == "No logs":
             num_log = None
         else:
-            num_log = int(self.mavproxy.match.group(1))
+            num_log = int(mavproxy.match.group(1))
         if loaded_module:
-            self.mavproxy.send("module unload log\n")
-            self.mavproxy.expect("Unloaded module log")
+            mavproxy.send("module unload log\n")
+            mavproxy.expect("Unloaded module log")
+        self.stop_mavproxy(mavproxy)
         return num_log
 
     def current_onboard_log_filepath(self):
@@ -8401,6 +9094,8 @@ switch value'''
                                         zero_time_base=True)
 
     def current_onboard_log_contains_message(self, messagetype):
+        self.progress("Checking (%s) for (%s)" %
+                      (self.current_onboard_log_filepath(), messagetype))
         dfreader = self.dfreader_for_current_onboard_log()
         m = dfreader.recv_match(type=messagetype)
         print("m=%s" % str(m))
@@ -8435,11 +9130,11 @@ switch value'''
             self.progress("Failed with timeout")
             self.fail_list.append(["Failed with timeout", None, None])
             if self.logs_dir:
-                if glob.glob("core*"):
+                if glob.glob("core*") or glob.glob("ap-*.core"):
                     self.check_logs("FRAMEWORK")
 
         if self.rc_thread is not None:
-            self.progress("Joining thread")
+            self.progress("Joining RC thread")
             self.rc_thread_should_quit = True
             self.rc_thread.join()
             self.rc_thread = None
@@ -8573,7 +9268,7 @@ switch value'''
         old_mt = self.get_parameter("MIS_TOTAL", attempts=20) # retries to avoid seeming race condition with MAVProxy
         ex = None
         try:
-            self.set_parameter("MIS_TOTAL", 17, retries=0)
+            self.set_parameter("MIS_TOTAL", 17, attempts=1)
         except ValueError as e:
             ex = e
         if ex is None:
@@ -8586,9 +9281,11 @@ switch value'''
         if self.get_parameter("MIS_OPTIONS") != 1:
             raise NotAchievedException("Failed to set MIS_OPTIONS")
 
-        from_mavproxy = self.get_parameter_mavproxy("MIS_OPTIONS")
+        mavproxy = self.start_mavproxy()
+        from_mavproxy = self.get_parameter_mavproxy(mavproxy, "MIS_OPTIONS")
         if from_mavproxy != 1:
             raise NotAchievedException("MAVProxy failed to get parameter")
+        self.stop_mavproxy(mavproxy)
 
     def test_parameter_documentation(self):
         '''ensure parameter documentation is valid'''
@@ -8631,11 +9328,14 @@ switch value'''
                      want_result=mavutil.mavlink.MAV_RESULT_ACCEPTED)
         self.disarm_vehicle()
 
-    def test_pid_tuning(self):
-        self.progress("making sure we're not getting PID_TUNING messages")
-        m = self.mav.recv_match(type='PID_TUNING', blocking=True, timeout=5)
+    def assert_not_receiving_message(self, message, timeout=1):
+        self.progress("making sure we're not getting %s messages" % message)
+        m = self.mav.recv_match(type=message, blocking=True, timeout=timeout)
         if m is not None:
-            raise PreconditionFailedException("Receiving PID_TUNING already")
+            raise PreconditionFailedException("Receiving %s messags" % message)
+
+    def test_pid_tuning(self):
+        self.assert_not_receiving_message('PID_TUNING', timeout=5)
         self.set_parameter("GCS_PID_MASK", 1)
         self.progress("making sure we are now getting PID_TUNING messages")
         m = self.mav.recv_match(type='PID_TUNING', blocking=True, timeout=5)
@@ -8652,6 +9352,7 @@ switch value'''
             self.drain_mav()
             self.assert_no_capability(mavutil.mavlink.MAV_PROTOCOL_CAPABILITY_FLIGHT_TERMINATION)
             self.set_parameter("AFS_ENABLE", 1)
+            self.set_parameter("SYSID_MYGCS", self.mav.source_system)
             self.drain_mav()
             self.assert_capability(mavutil.mavlink.MAV_PROTOCOL_CAPABILITY_FLIGHT_TERMINATION)
             self.set_parameter("AFS_TERM_ACTION", 42)
@@ -8715,13 +9416,15 @@ switch value'''
             self.drain_mav()
             self.delay_sim_time(0.5)
 
-    def wait_gps_fix_type_gte(self, fix_type, timeout=30):
+    def wait_gps_fix_type_gte(self, fix_type, timeout=30, message_type="GPS_RAW_INT", verbose=False):
         tstart = self.get_sim_time()
         while True:
             now = self.get_sim_time_cached()
             if now - tstart > timeout:
                 raise AutoTestTimeoutException("Did not get good GPS lock")
-            m = self.mav.recv_match(type="GPS_RAW_INT", blocking=True, timeout=0.1)
+            m = self.mav.recv_match(type=message_type, blocking=True, timeout=0.1)
+            if verbose:
+                self.progress("Received: %s" % str(m))
             if m is None:
                 continue
             if m.fix_type >= fix_type:
@@ -8757,16 +9460,17 @@ switch value'''
             raise NotAchievedException("NMEA output inaccurate (dist=%f want<%f)" %
                                        (distance, max_distance))
 
-    def mavproxy_load_module(self, module):
-        self.mavproxy.send("module load %s\n" % module)
-        self.mavproxy.expect("Loaded module %s" % module)
+    def mavproxy_load_module(self, mavproxy, module):
+        mavproxy.send("module load %s\n" % module)
+        mavproxy.expect("Loaded module %s" % module)
 
-    def mavproxy_unload_module(self, module):
-        self.mavproxy.send("module unload %s\n" % module)
-        self.mavproxy.expect("Unloaded module %s" % module)
+    def mavproxy_unload_module(self, mavproxy, module):
+        mavproxy.send("module unload %s\n" % module)
+        mavproxy.expect("Unloaded module %s" % module)
 
     def accelcal(self):
         ex = None
+        mavproxy = self.start_mavproxy()
         try:
             # setup with pre-existing accel offsets, to show that existing offsets don't
             # adversely affect a new cal
@@ -8795,12 +9499,12 @@ switch value'''
                     initial_params[sim_prefix + "_" + axis] = getattr(post_value, axis.lower())
             self.set_parameters(initial_params)
             self.customise_SITL_commandline(["-M", "calibration"])
-            self.mavproxy_load_module("sitl_calibration")
-            self.mavproxy_load_module("calibration")
-            self.mavproxy_load_module("relay")
-            self.mavproxy.send("sitl_accelcal\n")
-            self.mavproxy.send("accelcal\n")
-            self.mavproxy.expect("Calibrated")
+            self.mavproxy_load_module(mavproxy, "sitl_calibration")
+            self.mavproxy_load_module(mavproxy, "calibration")
+            self.mavproxy_load_module(mavproxy, "relay")
+            mavproxy.send("sitl_accelcal\n")
+            mavproxy.send("accelcal\n")
+            mavproxy.expect("Calibrated")
             for wanted in [
                     "level",
                     "on its LEFT side",
@@ -8810,11 +9514,11 @@ switch value'''
                     "on its BACK",
             ]:
                 timeout = 2
-                self.mavproxy.expect("Place vehicle %s and press any key." % wanted, timeout=timeout)
-                self.mavproxy.expect("sitl_accelcal: sending attitude, please wait..", timeout=timeout)
-                self.mavproxy.expect("sitl_accelcal: attitude detected, please press any key..", timeout=timeout)
-                self.mavproxy.send("\n")
-            self.mavproxy.expect("APM: Calibration successful", timeout=timeout)
+                mavproxy.expect("Place vehicle %s and press any key." % wanted, timeout=timeout)
+                mavproxy.expect("sitl_accelcal: sending attitude, please wait..", timeout=timeout)
+                mavproxy.expect("sitl_accelcal: attitude detected, please press any key..", timeout=timeout)
+                mavproxy.send("\n")
+            mavproxy.expect(".*Calibration successful", timeout=timeout)
             self.drain_mav()
 
             self.progress("Checking results")
@@ -8836,13 +9540,14 @@ switch value'''
         except Exception as e:
             self.print_exception_caught(e)
             ex = e
-        self.mavproxy_unload_module("relay")
-        self.mavproxy_unload_module("calibration")
-        self.mavproxy_unload_module("sitl_calibration")
+        self.mavproxy_unload_module(mavproxy, "relay")
+        self.mavproxy_unload_module(mavproxy, "calibration")
+        self.mavproxy_unload_module(mavproxy, "sitl_calibration")
+        self.stop_mavproxy(mavproxy)
         if ex is not None:
             raise ex
 
-    def ahrstrim(self):
+    def ahrstrim_preflight_cal(self):
         # setup with non-zero accel offsets
         self.set_parameters({
             "INS_ACCOFFS_X": 0.7,
@@ -8888,6 +9593,41 @@ switch value'''
                     (v, pname, expected_v, error_pct))
             self.progress("Correct value %.4f for %s error %.2f%%" %
                           (v, pname, error_pct))
+
+    def ahrstrim_attitude_correctness(self):
+        self.wait_ready_to_arm()
+        HOME = self.sitl_start_location()
+        for heading in 0, 90:
+            self.customise_SITL_commandline([
+                "--home", "%s,%s,%s,%s" % (HOME.lat, HOME.lng, HOME.alt, heading)
+            ])
+            for ahrs_type in [0, 2, 3]:
+                self.start_subsubtest("Testing AHRS_TYPE=%u" % ahrs_type)
+                self.context_push()
+                self.set_parameter("AHRS_EKF_TYPE", ahrs_type)
+                self.reboot_sitl()
+                self.wait_prearm_sys_status_healthy()
+                for (r, p) in [(0, 0), (9, 0), (2, -6), (10, 10)]:
+                    self.set_parameters({
+                        'AHRS_TRIM_X': math.radians(r),
+                        'AHRS_TRIM_Y': math.radians(p),
+                        "SIM_ACC_TRIM_X": math.radians(r),
+                        "SIM_ACC_TRIM_Y": math.radians(p),
+                    })
+                    self.wait_attitude(desroll=0, despitch=0, timeout=120, tolerance=1.5)
+                    if ahrs_type != 0:  # we don't get secondary msgs while DCM is primary
+                        self.wait_attitude(desroll=0, despitch=0, message_type='AHRS2', tolerance=1, timeout=120)
+                    #            self.send_debug_trap()
+                    self.wait_attitude_quaternion(desroll=0, despitch=0, tolerance=1, timeout=120)
+
+                self.context_pop()
+                self.reboot_sitl()
+
+    def ahrstrim(self):
+        self.start_subtest("Attitude Correctness")
+        self.ahrstrim_attitude_correctness()
+        self.start_subtest("Preflight Calibration")
+        self.ahrstrim_preflight_cal()
 
     def test_button(self):
         self.set_parameter("SIM_PIN_MASK", 0)
@@ -8938,7 +9678,7 @@ switch value'''
             return
 
         self.wait_ready_to_arm()
-        self.set_parameter("BTN_FUNC%u" % btn, 41)  # ARM/DISARM
+        self.set_parameter("BTN_FUNC%u" % btn, 153)  # ARM/DISARM
         self.set_parameter("SIM_PIN_MASK", mask)
         self.wait_armed()
         self.set_parameter("SIM_PIN_MASK", 0)
@@ -8976,6 +9716,20 @@ switch value'''
             self.wait_statustext("PreArm: Motors Emergency Stopped", check_context=True)
             self.context_pop()
             self.reboot_sitl()
+
+        if self.is_rover():
+            self.start_subtest("Testing using buttons for changing modes")
+            self.context_push()
+            if not self.mode_is('MANUAL'):
+                raise NotAchievedException("Bad mode")
+            self.set_parameter("BTN_FUNC%u" % btn, 53)  # steering mode
+            # press button:
+            self.set_parameter("SIM_PIN_MASK", mask)
+            self.wait_mode('STEERING')
+            # release button:
+            self.set_parameter("SIM_PIN_MASK", 0)
+            self.wait_mode('MANUAL')
+            self.context_pop()
 
     def compare_number_percent(self, num1, num2, percent):
         if num1 == 0 and num2 == 0:
@@ -9191,7 +9945,7 @@ switch value'''
         self.progress("received param (0x%02x) (id=%u value=%u)" %
                       (value, param_id, param_value))
         frame_type = param_value
-        hb = self.wait_heartbeat()
+        hb = self.mav.messages['HEARTBEAT']
         hb_type = hb.type
         self.progress("validate_params: HEARTBEAT type==%f frsky==%f param_id=%u" % (hb_type, frame_type, param_id))
         if param_id != 1:
@@ -9217,13 +9971,45 @@ switch value'''
             return False
         return True
 
+    def tfp_validate_terrain(self, value):
+        self.progress("validating terrain(0x%02x)" % value)
+        alt_above_terrain_dm = self.bit_extract(value, 2, 10) * (10 ^ self.bit_extract(value, 0, 2)) * 0.1 * (self.bit_extract(value, 12, 1) == 1 and -1 or 1)  # noqa
+        terrain = self.mav.recv_match(
+            type='TERRAIN_REPORT',
+            blocking=True,
+            timeout=1
+        )
+        if terrain is None:
+            raise NotAchievedException("Did not get TERRAIN_REPORT message")
+        altitude_terrain_dm = round(terrain.current_height*10)
+        self.progress("TERRAIN_REPORT terrain_alt==%fdm frsky_terrain_alt==%fdm" % (altitude_terrain_dm, alt_above_terrain_dm))
+        if abs(altitude_terrain_dm - alt_above_terrain_dm) < 1:
+            return True
+        return False
+
+    def tfp_validate_wind(self, value):
+        self.progress("validating wind(0x%02x)" % value)
+        speed_m = self.bit_extract(value, 8, 7) * (10 ^ self.bit_extract(value, 7, 1)) * 0.1 # speed in m/s
+        wind = self.mav.recv_match(
+            type='WIND',
+            blocking=True,
+            timeout=1
+        )
+        if wind is None:
+            raise NotAchievedException("Did not get WIND message")
+        self.progress("WIND mav==%f frsky==%f" % (speed_m, wind.speed))
+        if abs(speed_m - wind.speed) < 0.5:
+            return True
+        return False
+
     def test_frsky_passthrough_do_wants(self, frsky, wants):
 
         tstart = self.get_sim_time_cached()
         while len(wants):
             self.progress("Still wanting (%s)" % ",".join([("0x%02x" % x) for x in wants.keys()]))
             wants_copy = copy.copy(wants)
-            t2 = self.get_sim_time()
+            self.drain_mav()
+            t2 = self.get_sim_time_cached()
             if t2 - tstart > 300:
                 self.progress("Failed to get frsky passthrough data")
                 self.progress("Counts of sensor_id polls sent:")
@@ -9243,7 +10029,7 @@ switch value'''
 
     def test_frsky_passthrough(self):
         self.set_parameter("SERIAL5_PROTOCOL", 10) # serial5 is FRSky passthrough
-        self.set_parameter("RPM_TYPE", 10) # enable RPM output
+        self.set_parameter("RPM1_TYPE", 10) # enable RPM output
         self.customise_SITL_commandline([
             "--uartF=tcp:6735" # serial5 spews to localhost:6735
         ])
@@ -9258,28 +10044,26 @@ switch value'''
         # test we get statustext strings.  This relies on ArduPilot
         # emitting statustext strings when we fetch parameters. (or,
         # now, an updating-barometer statustext)
-        tstart = self.get_sim_time_cached()
+        tstart = self.get_sim_time()
         old_data = None
         text = ""
-        sent_request = False
+        self.context_collect('STATUSTEXT')
+        self.run_cmd(mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION,
+                     0, # p1
+                     0, # p2
+                     1, # p3, baro
+                     0, # p4
+                     0, # p5
+                     0, # p6
+                     0) # p7
+
+        received_frsky_texts = []
+        last_len_received_statustexts = 0
         while True:
-            now = self.get_sim_time()
+            self.drain_mav()
+            now = self.get_sim_time_cached()
             if now - tstart > 60: # it can take a *long* time to get these messages down!
                 raise NotAchievedException("Did not get statustext in time")
-            if now - tstart > 30 and not sent_request:
-                # have to wait this long or our message gets squelched....
-                sent_request = True
-#                                self.mavproxy.send("param fetch\n")
-                self.run_cmd(
-                    mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION,
-                    0, # p1
-                    0, # p2
-                    1, # p3, baro
-                    0, # p4
-                    0, # p5
-                    0, # p6
-                    0, # p7
-                )
             frsky.update()
             data = frsky.get_data(0x5000) # no timestamping on this data, so we can't catch legitimate repeats.
             if data is None:
@@ -9301,14 +10085,32 @@ switch value'''
                 if (x & 0x7f) == 0x00:
                     last = True
             if last:
-                m = re.match("Updating barometer calibration", text)
+                m = None
+                text = text.rstrip("\0")
+                self.progress("Received frsky text (%s)" % (text,))
+                self.progress("context texts: %s" % str([x.text for x in self.context_collection('STATUSTEXT')]))
+                m = self.statustext_in_collections(text)
                 if m is not None:
-                    want_sev = mavutil.mavlink.MAV_SEVERITY_INFO
+                    want_sev = m.severity
                     if severity != want_sev:
                         raise NotAchievedException("Incorrect severity; want=%u got=%u" % (want_sev, severity))
-                    self.progress("Got statustext (%s)" % m.group(0))
+                    self.progress("Got statustext (%s)" % m.text)
                     break
+                received_frsky_texts.append((severity, text))
                 text = ""
+            received_statustexts = self.context_collection('STATUSTEXT')
+            if len(received_statustexts) != last_len_received_statustexts:
+                last_len_received_statustexts = len(received_statustexts)
+                self.progress("received statustexts: %s" % str([x.text for x in received_statustexts]))
+                self.progress("received frsky texts: %s" % str(received_frsky_texts))
+                for (want_sev, text) in received_frsky_texts:
+                    for m in received_statustexts:
+                        if m.text == text:
+                            if want_sev != m.severity:
+                                raise NotAchievedException("Incorrect severity; want=%u got=%u" % (want_sev, severity))
+                            self.progress("Got statustext (%s)" % text)
+                            break
+        self.context_stop_collecting('STATUSTEXT')
 
         self.wait_ready_to_arm()
 
@@ -9328,6 +10130,8 @@ switch value'''
             # 0x5008: lambda x : True, # no second battery, so this doesn't arrive
             0x5003: self.tfp_validate_battery1,
             0x5007: self.tfp_validate_params,
+            0x500B: self.tfp_validate_terrain,
+            0x500C: self.tfp_validate_wind,
         }
         self.test_frsky_passthrough_do_wants(frsky, wants)
 
@@ -9534,8 +10338,8 @@ switch value'''
         self.end_subtest("Enable fence via MAVlite")
 
     def tfs_validate_gps_alt(self, value):
-        self.progress("validating gps altitude integer part (0x%02x)" % value)
-        alt = value
+        self.progress("validating gps altitude (0x%02x)" % value)
+        alt_m = value * 0.01 # cm -> m
         gpi = self.mav.recv_match(
             type='GLOBAL_POSITION_INT',
             blocking=True,
@@ -9543,15 +10347,15 @@ switch value'''
         )
         if gpi is None:
             raise NotAchievedException("Did not get GLOBAL_POSITION_INT message")
-        gpi_alt = round(gpi.alt * 0.001)
-        self.progress("GLOBAL_POSITION_INT alt==%f frsky==%f" % (gpi_alt, alt))
-        if self.compare_number_percent(gpi_alt, alt, 10):
+        gpi_alt_m = round(gpi.alt * 0.001) # mm-> m
+        self.progress("GLOBAL_POSITION_INT alt==%f frsky==%f" % (gpi_alt_m, alt_m))
+        if self.compare_number_percent(gpi_alt_m, alt_m, 10):
             return True
         return False
 
     def tfs_validate_baro_alt(self, value):
-        self.progress("validating baro altitude integer part (0x%02x)" % value)
-        alt_m = value
+        self.progress("validating baro altitude (0x%02x)" % value)
+        alt_m = value * 0.01 # cm -> m
         gpi = self.mav.recv_match(
             type='GLOBAL_POSITION_INT',
             blocking=True,
@@ -9559,15 +10363,15 @@ switch value'''
         )
         if gpi is None:
             raise NotAchievedException("Did not get GLOBAL_POSITION_INT message")
-        gpi_alt_m = round(gpi.relative_alt * 0.001)
+        gpi_alt_m = round(gpi.relative_alt * 0.001) # mm -> m
         self.progress("GLOBAL_POSITION_INT relative_alt==%f frsky==%f" % (gpi_alt_m, alt_m))
         if abs(gpi_alt_m - alt_m) < 1:
             return True
         return False
 
     def tfs_validate_gps_speed(self, value):
-        self.progress("validating gps speed integer part (0x%02x)" % value)
-        speed = value
+        self.progress("validating gps speed (0x%02x)" % value)
+        speed_ms = value * 0.001 # mm/s -> m/s
         vfr_hud = self.mav.recv_match(
             type='VFR_HUD',
             blocking=True,
@@ -9575,15 +10379,15 @@ switch value'''
         )
         if vfr_hud is None:
             raise NotAchievedException("Did not get VFR_HUD message")
-        vfr_hud_speed = round(vfr_hud.groundspeed)
-        self.progress("VFR_HUD groundspeed==%f frsky==%f" % (vfr_hud_speed, speed))
-        if self.compare_number_percent(vfr_hud_speed, speed, 10):
+        vfr_hud_speed_ms = round(vfr_hud.groundspeed)
+        self.progress("VFR_HUD groundspeed==%f frsky==%f" % (vfr_hud_speed_ms, speed_ms))
+        if self.compare_number_percent(vfr_hud_speed_ms, speed_ms, 10):
             return True
         return False
 
     def tfs_validate_yaw(self, value):
         self.progress("validating yaw (0x%02x)" % value)
-        yaw = value
+        yaw_deg = value * 0.01 # cd -> deg
         vfr_hud = self.mav.recv_match(
             type='VFR_HUD',
             blocking=True,
@@ -9591,15 +10395,15 @@ switch value'''
         )
         if vfr_hud is None:
             raise NotAchievedException("Did not get VFR_HUD message")
-        vfr_hud_yaw = round(vfr_hud.heading)
-        self.progress("VFR_HUD heading==%f frsky==%f" % (vfr_hud_yaw, yaw))
-        if self.compare_number_percent(vfr_hud_yaw, yaw, 10):
+        vfr_hud_yaw_deg = round(vfr_hud.heading)
+        self.progress("VFR_HUD heading==%f frsky==%f" % (vfr_hud_yaw_deg, yaw_deg))
+        if self.compare_number_percent(vfr_hud_yaw_deg, yaw_deg, 10):
             return True
         return False
 
     def tfs_validate_vspeed(self, value):
         self.progress("validating vspeed (0x%02x)" % value)
-        vspeed = value
+        vspeed_ms = value * 0.01 # cm/s -> m/s
         vfr_hud = self.mav.recv_match(
             type='VFR_HUD',
             blocking=True,
@@ -9607,15 +10411,15 @@ switch value'''
         )
         if vfr_hud is None:
             raise NotAchievedException("Did not get VFR_HUD message")
-        vfr_hud_vspeed = round(vfr_hud.climb)
-        self.progress("VFR_HUD climb==%f frsky==%f" % (vfr_hud_vspeed, vspeed))
-        if self.compare_number_percent(vfr_hud_vspeed, vspeed, 10):
+        vfr_hud_vspeed_ms = round(vfr_hud.climb)
+        self.progress("VFR_HUD climb==%f frsky==%f" % (vfr_hud_vspeed_ms, vspeed_ms))
+        if self.compare_number_percent(vfr_hud_vspeed_ms, vspeed_ms, 10):
             return True
         return False
 
     def tfs_validate_battery1(self, value):
         self.progress("validating battery1 (0x%02x)" % value)
-        voltage = value*0.1
+        voltage_v = value * 0.01 # cV -> V
         batt = self.mav.recv_match(
             type='BATTERY_STATUS',
             blocking=True,
@@ -9624,16 +10428,16 @@ switch value'''
         )
         if batt is None:
             raise NotAchievedException("Did not get BATTERY_STATUS message")
-        battery_status_value = batt.voltages[0]/1000.0
-        self.progress("BATTERY_STATUS volatge==%f frsky==%f" % (battery_status_value, voltage))
-        if self.compare_number_percent(battery_status_value, voltage, 10):
+        battery_status_voltage_v = batt.voltages[0] * 0.001 # mV -> V
+        self.progress("BATTERY_STATUS volatge==%f frsky==%f" % (battery_status_voltage_v, voltage_v))
+        if self.compare_number_percent(battery_status_voltage_v, voltage_v, 10):
             return True
         return False
 
     def tfs_validate_current1(self, value):
         # test frsky current vs BATTERY_STATUS
         self.progress("validating battery1 (0x%02x)" % value)
-        current = value*0.1
+        current_a = value * 0.1 # dA -> A
         batt = self.mav.recv_match(
             type='BATTERY_STATUS',
             blocking=True,
@@ -9642,9 +10446,9 @@ switch value'''
         )
         if batt is None:
             raise NotAchievedException("Did not get BATTERY_STATUS message")
-        battery_status_current = batt.current_battery*0.01
-        self.progress("BATTERY_STATUS current==%f frsky==%f" % (battery_status_current, current))
-        if self.compare_number_percent(battery_status_current, current, 10):
+        battery_status_current_a = batt.current_battery * 0.01 # cA -> A
+        self.progress("BATTERY_STATUS current==%f frsky==%f" % (battery_status_current_a, current_a))
+        if self.compare_number_percent(battery_status_current_a, current_a, 10):
             return True
         return False
 
@@ -9729,7 +10533,7 @@ switch value'''
 
     def test_frsky_sport(self):
         self.set_parameter("SERIAL5_PROTOCOL", 4) # serial5 is FRSky sport
-        self.set_parameter("RPM_TYPE", 10) # enable SITL RPM sensor
+        self.set_parameter("RPM1_TYPE", 10) # enable SITL RPM sensor
         self.customise_SITL_commandline([
             "--uartF=tcp:6735" # serial5 spews to localhost:6735
         ])
@@ -9749,21 +10553,18 @@ switch value'''
         # This, at least makes sure we're getting some of each
         # message.
         wants = {
-            0x01: self.tfs_validate_gps_alt, # gps altitude integer m
-            0x02: self.tfs_validate_tmp1, # Tmp1
-            0x04: self.tfs_validate_fuel, # fuel
-            0x05: self.tfs_validate_tmp2, # Tmp2
-            0x09: lambda x: True, # gps altitude decimal cm
-            0x10: self.tfs_validate_baro_alt, # baro alt integer m
-            0x11: self.tfs_validate_gps_speed, # gps speed integer m/s
-            0x14: self.tfs_validate_yaw, # yaw in degrees
-            0x19: lambda x: True, # gps speed decimal cm/s
-            0x21: lambda x: True, # altitude decimal m
-            0x28: self.tfs_validate_current1, # current A
-            0x30: self.tfs_validate_vspeed, # vertical speed m/s
-            0x39: self.tfs_validate_battery1, # battery 1 voltage
-            0x800: self.tf_validate_gps, # gps lat/lon
-            0x50E: self.tfs_validate_rpm, # rpm 1
+            0x082F: self.tfs_validate_gps_alt, # gps altitude integer cm
+            0x040F: self.tfs_validate_tmp1, # Tmp1
+            0x060F: self.tfs_validate_fuel, # fuel % 0-100
+            0x041F: self.tfs_validate_tmp2, # Tmp2
+            0x010F: self.tfs_validate_baro_alt, # baro alt cm
+            0x083F: self.tfs_validate_gps_speed, # gps speed integer mm/s
+            0x084F: self.tfs_validate_yaw, # yaw in cd
+            0x020F: self.tfs_validate_current1, # current dA
+            0x011F: self.tfs_validate_vspeed, # vertical speed cm/s
+            0x021F: self.tfs_validate_battery1, # battery 1 voltage cV
+            0x0800: self.tf_validate_gps, # gps lat/lon
+            0x050E: self.tfs_validate_rpm, # rpm 1
         }
         tstart = self.get_sim_time_cached()
         last_wanting_print = 0
@@ -9813,19 +10614,49 @@ switch value'''
         if m is None:
             raise NotAchievedException("Did not receive GLOBAL_POSITION_INT")
         gpi_abs_alt = int((m.alt+500) / 1000) # mm -> m
+
+        # grab a battery-remaining percentage
+        self.run_cmd(mavutil.mavlink.MAV_CMD_BATTERY_RESET,
+                     255,  # battery mask
+                     96,  # percentage
+                     0,
+                     0,
+                     0,
+                     0,
+                     0,
+                     0)
+        m = self.mav.recv_match(type='BATTERY_STATUS', blocking=True, timeout=1)
+        if m is None:
+            raise NotAchievedException("Did not receive BATTERY_STATUS")
+        want_battery_remaining_pct = m.battery_remaining
+
         tstart = self.get_sim_time_cached()
+        have_alt = False
+        have_battery = False
         while True:
             t2 = self.get_sim_time_cached()
             if t2 - tstart > 10:
                 raise AutoTestTimeoutException("Failed to get frsky D data")
             frsky.update()
+
             alt = frsky.get_data(frsky.dataid_GPS_ALT_BP)
             self.progress("Got alt (%s) mav=%s" % (str(alt), str(gpi_abs_alt)))
             if alt is None:
                 continue
-            self.drain_mav_unparsed()
             if alt == gpi_abs_alt:
+                have_alt = True
+
+            batt = frsky.get_data(frsky.dataid_FUEL)
+            self.progress("Got batt (%s) mav=%s" % (str(batt), str(want_battery_remaining_pct)))
+            if batt is None:
+                continue
+            if batt == want_battery_remaining_pct:
+                have_battery = True
+
+            if have_alt and have_battery:
                 break
+
+            self.drain_mav_unparsed()
 
     def test_ltm_g(self, ltm):
         g = ltm.g()
@@ -9962,6 +10793,151 @@ switch value'''
         self.context_pop()
         self.disarm_vehicle(force=True)
         self.reboot_sitl()
+        if ex is not None:
+            raise ex
+
+    def AHRS_ORIENTATION(self):
+        '''test AHRS_ORIENTATION parameter works'''
+        self.context_push()
+        self.wait_ready_to_arm()
+        original_imu = self.assert_receive_message("RAW_IMU", verbose=True)
+        self.set_parameter("AHRS_ORIENTATION", 16)  # roll-90
+        self.delay_sim_time(2)  # we update this on a timer
+        new_imu = self.assert_receive_message("RAW_IMU", verbose=True)
+        delta_zacc = original_imu.zacc - new_imu.zacc
+        delta_z_g = delta_zacc/1000.0  # milligravities -> gravities
+        if delta_z_g - 1 > 0.1:  # milligravities....
+            raise NotAchievedException("Magic AHRS_ORIENTATION update did not work (delta_z_g=%f)" % (delta_z_g,))
+        delta_yacc = original_imu.yacc - new_imu.yacc
+        delta_y_g = delta_yacc/1000.0  # milligravities -> gravities
+        if delta_y_g + 1 > 0.1:
+            raise NotAchievedException("Magic AHRS_ORIENTATION update did not work (delta_y_g=%f)" % (delta_y_g,))
+        self.context_pop()
+        self.reboot_sitl()
+        self.delay_sim_time(2)  # we update orientation on a timer
+
+    def GPSTypes(self):
+        '''check each simulated GPS works'''
+        self.reboot_sitl()
+        orig = self.poll_home_position(timeout=60)
+        # (sim_gps_type, name, gps_type, detection name)
+        # if gps_type is None we auto-detect
+        sim_gps = [
+            # (0, "NONE"),
+            (1, "UBLOX", None, "u-blox"),
+            (5, "NMEA", 5, "NMEA"),
+            (6, "SBP", None, "SBP"),
+            # (7, "SBP2", 9, "SBP2"),  # broken, "waiting for config data"
+            (8, "NOVA", 15, "NOVA"),  # no attempt to auto-detect this in AP_GPS
+            # (9, "FILE"),
+        ]
+        for (sim_gps_type, name, gps_type, detect_name) in sim_gps:
+            self.start_subtest("Checking GPS type %s" % name)
+            self.set_parameter("SIM_GPS_TYPE", sim_gps_type)
+            if gps_type is None:
+                gps_type = 1  # auto-detect
+            self.set_parameter("GPS_TYPE", gps_type)
+            self.context_collect("STATUSTEXT")
+            self.reboot_sitl()
+            self.wait_statustext("detected as %s" % detect_name, check_context=True)
+            n = self.poll_home_position(timeout=120)
+            distance = self.get_distance_int(orig, n)
+            if distance > 1:
+                raise NotAchievedException("gps type %u misbehaving" % name)
+
+    def assert_gps_satellite_count(self, messagename, count):
+        m = self.assert_receive_message(messagename)
+        if m.satellites_visible != count:
+            raise NotAchievedException("Expected %u sats, got %u" %
+                                       (count, m.satellites_visible))
+
+    def MultipleGPS(self):
+        '''check ArduPilot behaviour across multiple GPS units'''
+        self.assert_message_rate_hz('GPS2_RAW', 0)
+
+        # we start sending GPS_TYPE2 - but it will never actually be
+        # filled in as _port[1] is only filled in in AP_GPS::init()
+        self.start_subtest("Get GPS2_RAW as soon as we're configured for a second GPS")
+        self.set_parameter("GPS_TYPE2", 1)
+        self.assert_message_rate_hz('GPS2_RAW', 5)
+
+        self.start_subtest("Ensure correct fix type when no connected GPS")
+        m = self.assert_receive_message("GPS2_RAW")
+        self.progress(self.dump_message_verbose(m))
+        if m.fix_type != mavutil.mavlink.GPS_FIX_TYPE_NO_GPS:
+            raise NotAchievedException("Incorrect fix type")
+
+        self.start_subtest("Ensure detection when sim gps connected")
+        self.set_parameter("SIM_GPS2_TYPE", 1)
+        self.set_parameter("SIM_GPS2_DISABLE", 0)
+        # a reboot is required after setting GPS_TYPE2.  We start
+        # sending GPS2_RAW out, once the parameter is set, but a
+        # reboot is required because _port[1] is only set in
+        # AP_GPS::init() at boot time, so it will never be detected.
+        self.context_collect("STATUSTEXT")
+        self.reboot_sitl()
+        self.wait_statustext("GPS 1: detected as u-blox", check_context=True)
+        self.wait_statustext("GPS 2: detected as u-blox", check_context=True)
+        m = self.assert_receive_message("GPS2_RAW")
+        self.progress(self.dump_message_verbose(m))
+        # would be nice for it to take some time to get a fix....
+        if m.fix_type != mavutil.mavlink.GPS_FIX_TYPE_RTK_FIXED:
+            raise NotAchievedException("Incorrect fix type")
+
+        self.start_subtest("Check parameters are per-GPS")
+        self.assert_parameter_value("SIM_GPS_NUMSATS", 10)
+        self.assert_gps_satellite_count("GPS_RAW_INT", 10)
+        self.set_parameter("SIM_GPS_NUMSATS", 13)
+        self.assert_gps_satellite_count("GPS_RAW_INT", 13)
+
+        self.assert_parameter_value("SIM_GPS2_NUMSATS", 10)
+        self.assert_gps_satellite_count("GPS2_RAW", 10)
+        self.set_parameter("SIM_GPS2_NUMSATS", 12)
+        self.assert_gps_satellite_count("GPS2_RAW", 12)
+
+        self.start_subtest("check that GLOBAL_POSITION_INT fails over")
+        m = self.assert_receive_message("GLOBAL_POSITION_INT")
+        gpi_alt = m.alt
+        for msg in ["GPS_RAW_INT", "GPS2_RAW"]:
+            m = self.assert_receive_message(msg)
+            if abs(m.alt - gpi_alt) > 100:  # these are in mm
+                raise NotAchievedException("Alt (%s) discrepancy; %d vs %d" %
+                                           (msg, m.alt, gpi_alt))
+        introduced_error = 10  # in metres
+        self.set_parameter("SIM_GPS2_ALT_OFS", introduced_error)
+        m = self.assert_receive_message("GPS2_RAW")
+        if abs((m.alt-introduced_error*1000) - gpi_alt) > 100:
+            raise NotAchievedException("skewed Alt (%s) discrepancy; %d+%d vs %d" %
+                                       (msg, introduced_error*1000, m.alt, gpi_alt))
+        m = self.assert_receive_message("GLOBAL_POSITION_INT")
+        new_gpi_alt = m.alt
+        if abs(gpi_alt - new_gpi_alt) > 100:
+            raise NotAchievedException("alt moved unexpectedly")
+        self.progress("Killing first GPS")
+        self.set_parameter("SIM_GPS_DISABLE", 1)
+        self.delay_sim_time(1)
+        self.progress("Checking altitude now matches second GPS")
+        m = self.assert_receive_message("GLOBAL_POSITION_INT")
+        new_gpi_alt2 = m.alt
+        m = self.assert_receive_message("GPS2_RAW")
+        if abs(new_gpi_alt2 - m.alt) > 100:
+            raise NotAchievedException("Failover not detected")
+
+    def MAVFTP(self):
+        '''ensure MAVProxy can do MAVFTP to ardupilot'''
+        mavproxy = self.start_mavproxy()
+        ex = None
+        try:
+            mavproxy.send("module load ftp\n")
+            mavproxy.expect(["Loaded module ftp", "module ftp already loaded"])
+            mavproxy.send("ftp list\n")
+            mavproxy.expect(" D libraries")  # one line from the ftp list output
+        except Exception as e:
+            self.print_exception_caught(e)
+            ex = e
+
+        self.stop_mavproxy(mavproxy)
+
         if ex is not None:
             raise ex
 
@@ -10144,8 +11120,8 @@ switch value'''
 
         return psd
 
-    def model_defaults_filepath(self, vehicle, model):
-
+    def model_defaults_filepath(self, model):
+        vehicle = self.vehicleinfo_key()
         vinfo = vehicleinfo.VehicleInfo()
         defaults_filepath = vinfo.options[vehicle]["frames"][model]["default_params_filename"]
         if isinstance(defaults_filepath, str):
@@ -10154,3 +11130,8 @@ switch value'''
         for d in defaults_filepath:
             defaults_list.append(os.path.join(testdir, d))
         return defaults_list
+
+    def load_default_params_file(self, filename):
+        '''load a file from Tools/autotest/default_params'''
+        filepath = util.reltopdir(os.path.join("Tools", "autotest", "default_params", filename))
+        self.repeatedly_apply_parameter_file(filepath)

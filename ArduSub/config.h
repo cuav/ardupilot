@@ -14,7 +14,6 @@
 
 // run at 400Hz on all systems
 # define MAIN_LOOP_RATE    400
-# define MAIN_LOOP_SECONDS 0.0025f
 
 #ifndef SURFACE_DEPTH_DEFAULT
 # define SURFACE_DEPTH_DEFAULT -10.0f // pressure sensor reading 10cm depth means craft is considered surfaced
@@ -88,15 +87,8 @@
 # define AVOIDANCE_ENABLED DISABLED
 #endif
 
-#if AVOIDANCE_ENABLED == ENABLED // Avoidance Library relies on Proximity and Fence
-# define PROXIMITY_ENABLED ENABLED
+#if AVOIDANCE_ENABLED == ENABLED // Avoidance Library relies on Fence
 # define FENCE_ENABLED ENABLED
-#endif
-
-// Proximity sensor
-//
-#ifndef PROXIMITY_ENABLED
-# define PROXIMITY_ENABLED DISABLED
 #endif
 
 #ifndef MAV_SYSTEM_ID
@@ -251,8 +243,4 @@
 
 #ifndef AC_RALLY
 #define AC_RALLY   DISABLED
-#endif
-
-#ifndef AC_TERRAIN
-#define AC_TERRAIN DISABLED // Requires Rally enabled as well
 #endif

@@ -18,6 +18,9 @@ FLASH_RESERVE_START_KB 0
 PB5 LED_BOOTLOADER OUTPUT LOW
 define HAL_LED_ON 0
 
+# Avoid buzzer scream
+PC9 BUZZER OUTPUT LOW PULLDOWN
+
 # the location where the bootloader will put the firmware
 FLASH_BOOTLOADER_LOAD_KB 64
 
@@ -27,10 +30,6 @@ SERIAL_ORDER OTG1
 
 PA11 OTG_FS_DM OTG1
 PA12 OTG_FS_DP OTG1
-
-define HAL_USE_EMPTY_STORAGE 1
-define HAL_STORAGE_SIZE 15360
-
 
 # Add CS pins to ensure they are high in bootloader
 PB14 MAX7456_CS CS

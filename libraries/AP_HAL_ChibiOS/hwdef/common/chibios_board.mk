@@ -96,7 +96,7 @@ include $(CHIBIOS)/$(CHIBIOS_STARTUP_MK)
 # HAL-OSAL files (optional).
 include $(CHIBIOS)/os/hal/hal.mk
 include $(CHIBIOS)/$(CHIBIOS_PLATFORM_MK)
-include $(CHIBIOS)/os/hal/osal/rt/osal.mk
+include $(CHIBIOS)/os/hal/osal/rt-nil/osal.mk
 # RTOS files (optional).
 include $(CHIBIOS)/os/rt/rt.mk
 include $(CHIBIOS)/os/common/ports/ARMCMx/compilers/GCC/mk/port_v7m.mk
@@ -128,6 +128,12 @@ CSRC += $(HWDEF)/common/stubs.c \
 
 #	   $(TESTSRC) \
 #	   test.c
+ifneq ($(CRASHCATCHER),)
+LIBCC_CSRC = $(CRASHCATCHER)/Core/src/CrashCatcher.c \
+             $(HWDEF)/common/crashdump.c
+
+LIBCC_ASMXSRC = $(CRASHCATCHER)/Core/src/CrashCatcher_armv7m.S
+endif
 
 # C++ sources that can be compiled in ARM or THUMB mode depending on the global
 # setting.
@@ -160,6 +166,9 @@ ASMXSRC = $(ALLXASMSRC)
 INCDIR = $(CHIBIOS)/os/license \
          $(ALLINC) $(HWDEF)/common
 
+ifneq ($(CRASHCATCHER),)
+INCDIR += $(CRASHCATCHER)/include
+endif
 #
 # Project, sources and paths
 ##############################################################################
@@ -192,10 +201,10 @@ AOPT =
 TOPT = -mthumb -DTHUMB
 
 # Define C warning options here
-CWARN = -Wall -Wextra -Wundef -Wstrict-prototypes
+CWARN = -Wall -Wextra -Wundef -Wstrict-prototypes -Werror
 
 # Define C++ warning options here
-CPPWARN = -Wall -Wextra -Wundef
+CPPWARN = -Wall -Wextra -Wundef -Werror
 
 #
 # Compiler settings
@@ -206,7 +215,8 @@ CPPWARN = -Wall -Wextra -Wundef
 #
 
 # List all user C define here, like -D_DEBUG=1
-UDEFS = $(ENV_UDEFS) $(FATFS_FLAGS) -DHAL_BOARD_NAME=\"$(HAL_BOARD_NAME)\"
+UDEFS = $(ENV_UDEFS) $(FATFS_FLAGS) -DHAL_BOARD_NAME=\"$(HAL_BOARD_NAME)\" \
+        -DHAL_MAX_STACK_FRAME_SIZE=$(HAL_MAX_STACK_FRAME_SIZE)
 
 ifeq ($(ENABLE_ASSERTS),yes)
  UDEFS += -DHAL_CHIBIOS_ENABLE_ASSERTS
@@ -216,6 +226,11 @@ endif
 ifeq ($(ENABLE_MALLOC_GUARD),yes)
  UDEFS += -DHAL_CHIBIOS_ENABLE_MALLOC_GUARD
  ASXFLAGS += -DHAL_CHIBIOS_ENABLE_MALLOC_GUARD
+endif
+
+ifeq ($(ENABLE_STATS),yes)
+ UDEFS += -DHAL_ENABLE_THREAD_STATISTICS
+ ASXFLAGS += -DHAL_ENABLE_THREAD_STATISTICS
 endif
 
 # Define ASM defines here

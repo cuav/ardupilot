@@ -9,6 +9,7 @@
 enum ap_message : uint8_t {
     MSG_HEARTBEAT,
     MSG_ATTITUDE,
+    MSG_ATTITUDE_QUATERNION,
     MSG_LOCATION,
     MSG_SYS_STATUS,
     MSG_POWER_STATUS,
@@ -26,7 +27,6 @@ enum ap_message : uint8_t {
     MSG_SCALED_PRESSURE,
     MSG_SCALED_PRESSURE2,
     MSG_SCALED_PRESSURE3,
-    MSG_SENSOR_OFFSETS,
     MSG_GPS_RAW,
     MSG_GPS_RTK,
     MSG_GPS2_RAW,
@@ -77,5 +77,10 @@ enum ap_message : uint8_t {
     MSG_GENERATOR_STATUS,
     MSG_WINCH_STATUS,
     MSG_SHT31_STATUS,
+    MSG_WATER_DEPTH,
+    MSG_HIGH_LATENCY2,
+    MSG_AIS_VESSEL,
+    MSG_MCU_STATUS,
+    MSG_UAVIONIX_ADSB_OUT_STATUS,
     MSG_LAST // MSG_LAST must be the last entry in this enum
 };

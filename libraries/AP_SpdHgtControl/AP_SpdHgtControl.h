@@ -35,7 +35,7 @@ public:
 
 	// demanded throttle in percentage
 	// should return 0 to 100
-	virtual int32_t get_throttle_demand(void)=0;
+	virtual float get_throttle_demand(void)=0;
 	
 	// demanded pitch angle in centi-degrees
 	// should return -9000 to +9000
@@ -49,6 +49,9 @@ public:
 
 	// return maximum climb rate
 	virtual float get_max_climbrate(void) const = 0;
+
+    // return maximum sink rate (+ve number)
+    virtual float get_max_sinkrate(void) const = 0;
 
     // added to let SoaringController reset pitch integrator to zero
     virtual void reset_pitch_I(void) = 0;

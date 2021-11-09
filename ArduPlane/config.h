@@ -38,11 +38,7 @@
 //
 
 #ifndef OPTFLOW
-#if AP_AHRS_NAVEKF_AVAILABLE
  # define OPTFLOW ENABLED
-#else
- # define OPTFLOW DISABLED
-#endif
 #endif
 
 
@@ -251,27 +247,10 @@
  # define AC_FENCE ENABLED
 #endif
 
-// pwm value on FENCE_CHANNEL to use to enable fenced mode
-#ifndef FENCE_ENABLE_PWM
- # define FENCE_ENABLE_PWM 1750
-#endif
-
 // a digital pin to set high when the geo-fence triggers. Defaults
 // to -1, which means don't activate a pin
 #ifndef FENCE_TRIGGERED_PIN
  # define FENCE_TRIGGERED_PIN -1
-#endif
-
-// if RESET_SWITCH_CH is not zero, then this is the PWM value on
-// that channel where we reset the control mode to the current switch
-// position (to for example return to switched mode after failsafe or
-// fence breach)
-#ifndef RESET_SWITCH_CHAN_PWM
- # define RESET_SWITCH_CHAN_PWM 1750
-#endif
-
-#ifndef HIL_SUPPORT
-# define HIL_SUPPORT !HAL_MINIMIZE_FEATURES
 #endif
 
 //////////////////////////////////////////////////////////////////////////////
@@ -306,4 +285,10 @@
 //  EKF Failsafe
 #ifndef FS_EKF_THRESHOLD_DEFAULT
  # define FS_EKF_THRESHOLD_DEFAULT      0.8f    // EKF failsafe's default compass and velocity variance threshold above which the EKF failsafe will be triggered
+#endif
+
+/////////////////////////////////////////////////////////////////////////////
+//  Landing Throttle Control Trigger Threshold
+#ifndef THR_CTRL_LAND_THRESH
+ #define THR_CTRL_LAND_THRESH 0.7
 #endif

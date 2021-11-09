@@ -26,6 +26,7 @@
 #include <GCS_MAVLink/GCS.h>
 #include <AP_GPS/AP_GPS.h>
 #include <AP_Baro/AP_Baro.h>
+#include <AP_Mission/AP_Mission.h>
 
 AP_AdvancedFailsafe *AP_AdvancedFailsafe::_singleton;
 
@@ -72,7 +73,7 @@ const AP_Param::GroupInfo AP_AdvancedFailsafe::var_info[] = {
 
     // @Param: TERM_ACTION
     // @DisplayName: Terminate action
-    // @Description: This can be used to force an action on flight termination. Normally this is handled by an external failsafe board, but you can setup APM to handle it here. Please consult the wiki for more information on the possible values of the parameter
+    // @Description: This can be used to force an action on flight termination. Normally this is handled by an external failsafe board, but you can setup ArduPilot to handle it here. Please consult the wiki for more information on the possible values of the parameter
     // @User: Advanced
     AP_GROUPINFO("TERM_ACTION", 6, AP_AdvancedFailsafe, _terminate_action, 0),
 
@@ -164,7 +165,7 @@ const AP_Param::GroupInfo AP_AdvancedFailsafe::var_info[] = {
 // check for Failsafe conditions. This is called at 10Hz by the main
 // ArduPlane code
 void
-AP_AdvancedFailsafe::check(uint32_t last_heartbeat_ms, bool geofence_breached, uint32_t last_valid_rc_ms)
+AP_AdvancedFailsafe::check(bool geofence_breached, uint32_t last_valid_rc_ms)
 {    
     if (!_enable) {
         return;
@@ -203,9 +204,16 @@ AP_AdvancedFailsafe::check(uint32_t last_heartbeat_ms, bool geofence_breached, u
         hal.gpio->write(_manual_pin, mode==AFS_MANUAL);
     }
 
+    const uint32_t last_heartbeat_ms = gcs().sysid_myggcs_last_seen_time_ms();
     uint32_t now = AP_HAL::millis();
     bool gcs_link_ok = ((now - last_heartbeat_ms) < 10000);
     bool gps_lock_ok = ((now - AP::gps().last_fix_time_ms()) < 3000);
+
+    AP_Mission *_mission = AP::mission();
+    if (_mission == nullptr) {
+        return;
+    }
+    AP_Mission &mission = *_mission;
 
     switch (_state) {
     case STATE_PREFLIGHT:

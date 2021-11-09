@@ -6,6 +6,9 @@
 #include <AP_Frsky_Telem/AP_Frsky_Parameters.h>
 #include <AP_Mission/AP_Mission.h>
 #include <AP_OSD/AP_OSD.h>
+#if CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS
+#include <AP_HAL_ChibiOS/sdcard.h>
+#endif
 
 #define SCHED_TASK(func, rate_hz, max_time_micros) SCHED_TASK_CLASS(AP_Vehicle, &vehicle, func, rate_hz, max_time_micros)
 
@@ -46,7 +49,7 @@ const AP_Param::GroupInfo AP_Vehicle::var_info[] = {
     AP_SUBGROUPINFO(frsky_parameters, "FRSKY_", 6, AP_Vehicle, AP_Frsky_Parameters),
 #endif
 
-#if GENERATOR_ENABLED
+#if HAL_GENERATOR_ENABLED
     // @Group: GEN_
     // @Path: ../AP_Generator/AP_Generator.cpp
     AP_SUBGROUPINFO(generator, "GEN_", 7, AP_Vehicle, AP_Generator),
@@ -58,11 +61,17 @@ const AP_Param::GroupInfo AP_Vehicle::var_info[] = {
     AP_SUBGROUPINFO(externalAHRS, "EAHRS", 8, AP_Vehicle, AP_ExternalAHRS),
 #endif
 
+#if HAL_EFI_ENABLED
+    // @Group: EFI
+    // @Path: ../AP_EFI/AP_EFI.cpp
+    AP_SUBGROUPINFO(efi, "EFI", 9, AP_Vehicle, AP_EFI),
+#endif
+
     AP_GROUPEND
 };
 
 // reference to the vehicle. using AP::vehicle() here does not work on clang
-#if APM_BUILD_TYPE(APM_BUILD_UNKNOWN)
+#if APM_BUILD_TYPE(APM_BUILD_UNKNOWN) || APM_BUILD_TYPE(APM_BUILD_AP_Periph)
 AP_Vehicle& vehicle = *AP_Vehicle::get_singleton();
 #else
 extern AP_Vehicle& vehicle;
@@ -85,6 +94,14 @@ void AP_Vehicle::setup()
                         (unsigned)hal.util->available_memory());
 
     load_parameters();
+
+#if CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS
+    if (AP_BoardConfig::get_sdcard_slowdown() != 0) {
+        // user wants the SDcard slower, we need to remount
+        sdcard_stop();
+        sdcard_retry();
+    }
+#endif
 
     // initialise the main loop scheduler
     const AP_Scheduler::Task *tasks;
@@ -128,7 +145,10 @@ void AP_Vehicle::setup()
 
     // init_ardupilot is where the vehicle does most of its initialisation.
     init_ardupilot();
-    gcs().send_text(MAV_SEVERITY_INFO, "ArduPilot Ready");
+
+#if !APM_BUILD_TYPE(APM_BUILD_Replay)
+    SRV_Channels::init();
+#endif
 
     // gyro FFT needs to be initialized really late
 #if HAL_GYROFFT_ENABLED
@@ -157,9 +177,16 @@ void AP_Vehicle::setup()
 
     send_watchdog_reset_statustext();
 
-#if GENERATOR_ENABLED
+#if HAL_GENERATOR_ENABLED
     generator.init();
 #endif
+
+// init EFI monitoring
+#if HAL_EFI_ENABLED
+    efi.init();
+#endif
+
+    gcs().send_text(MAV_SEVERITY_INFO, "ArduPilot Ready");
 }
 
 void AP_Vehicle::loop()
@@ -177,6 +204,18 @@ void AP_Vehicle::loop()
         */
         done_safety_init = true;
         BoardConfig.init_safety();
+
+        // send RC output mode info if available
+        char banner_msg[50];
+        if (hal.rcout->get_output_mode_banner(banner_msg, sizeof(banner_msg))) {
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "%s", banner_msg);
+        }
+    }
+    const uint32_t new_internal_errors = AP::internalerror().errors();
+    if(_last_internal_errors != new_internal_errors) {
+        AP::logger().Write_Error(LogErrorSubsystem::INTERNAL_ERROR, LogErrorCode::INTERNAL_ERRORS_DETECTED);
+        gcs().send_text(MAV_SEVERITY_CRITICAL, "Internal Errors %x", (unsigned)new_internal_errors);
+        _last_internal_errors = new_internal_errors;
     }
 }
 
@@ -203,14 +242,21 @@ const AP_Scheduler::Task AP_Vehicle::scheduler_tasks[] = {
     SCHED_TASK_CLASS(AP_GyroFFT,   &vehicle.gyro_fft,       update,                  400, 50),
     SCHED_TASK_CLASS(AP_GyroFFT,   &vehicle.gyro_fft,       update_parameters,         1, 50),
 #endif
-    SCHED_TASK(update_dynamic_notch,                   200,    200),
+    SCHED_TASK(update_dynamic_notch,             LOOP_RATE,    200),
     SCHED_TASK_CLASS(AP_VideoTX,   &vehicle.vtx,            update,                    2, 100),
     SCHED_TASK(send_watchdog_reset_statustext,         0.1,     20),
-#if GENERATOR_ENABLED
+#if HAL_WITH_ESC_TELEM
+    SCHED_TASK_CLASS(AP_ESC_Telem, &vehicle.esc_telem,      update,                   10,  50),
+#endif
+#if HAL_GENERATOR_ENABLED
     SCHED_TASK_CLASS(AP_Generator, &vehicle.generator,      update,                   10,  50),
 #endif
 #if OSD_ENABLED
     SCHED_TASK(publish_osd_info, 1, 10),
+#endif
+    SCHED_TASK(accel_cal_update,      10,    100),
+#if HAL_EFI_ENABLED
+    SCHED_TASK_CLASS(AP_EFI,       &vehicle.efi,            update,                   10, 200),
 #endif
 };
 
@@ -313,6 +359,24 @@ void AP_Vehicle::write_notch_log_messages() const
             notches[0], notches[1], notches[2], notches[3]);
 }
 
+// run notch update at either loop rate or 200Hz
+void AP_Vehicle::update_dynamic_notch_at_specified_rate()
+{
+    const uint32_t now = AP_HAL::millis();
+
+    if (ins.has_harmonic_option(HarmonicNotchFilterParams::Options::LoopRateUpdate)
+        || now - _last_notch_update_ms > 5) {
+        update_dynamic_notch();
+        _last_notch_update_ms = now;
+    }
+}
+
+void AP_Vehicle::notify_no_such_mode(uint8_t mode_number)
+{
+    GCS_SEND_TEXT(MAV_SEVERITY_WARNING,"No such mode %u", mode_number);
+    AP::logger().Write_Error(LogErrorSubsystem::FLIGHT_MODE, LogErrorCode(mode_number));
+}
+
 // reboot the vehicle in an orderly manner, doing various cleanups and
 // flashing LEDs as appropriate
 void AP_Vehicle::reboot(bool hold_in_bootloader)
@@ -333,6 +397,11 @@ void AP_Vehicle::reboot(bool hold_in_bootloader)
 
     // do not process incoming mavlink messages while we delay:
     hal.scheduler->register_delay_callback(nullptr, 5);
+
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
+    // need to ensure the ack goes out:
+    hal.serial(0)->flush();
+#endif
 
     // delay to give the ACK a chance to get out, the LEDs to flash,
     // the IO board safety to be forced on, the parameters to flush, ...
@@ -367,7 +436,46 @@ void AP_Vehicle::publish_osd_info()
     nav_info.wp_number = mission->get_current_nav_index();
     osd->set_nav_info(nav_info);
 }
+
+void AP_Vehicle::get_osd_roll_pitch_rad(float &roll, float &pitch) const
+{
+    roll = ahrs.roll;
+    pitch = ahrs.pitch;
+}
+
 #endif
+
+#ifndef HAL_CAL_ALWAYS_REBOOT
+// allow for forced reboot after accelcal
+#define HAL_CAL_ALWAYS_REBOOT 0
+#endif
+
+/*
+  update accel cal
+ */
+void AP_Vehicle::accel_cal_update()
+{
+#if HAL_INS_ENABLED
+    if (hal.util->get_soft_armed()) {
+        return;
+    }
+    ins.acal_update();
+    // check if new trim values, and set them
+    Vector3f trim_rad;
+    if (ins.get_new_trim(trim_rad)) {
+        ahrs.set_trim(trim_rad);
+    }
+
+#if HAL_CAL_ALWAYS_REBOOT
+    if (ins.accel_cal_requires_reboot() &&
+        !hal.util->get_soft_armed()) {
+        hal.scheduler->delay(1000);
+        hal.scheduler->reboot(false);
+    }
+#endif
+#endif // HAL_INS_ENABLED
+}
+
 
 AP_Vehicle *AP_Vehicle::_singleton = nullptr;
 

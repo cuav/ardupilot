@@ -18,13 +18,39 @@
 #include <AP_Param/AP_Param.h>
 #include <SITL/SIM_JSBSim.h>
 #include <AP_HAL/utility/Socket.h>
+#include <AP_HAL/utility/getopt_cpp.h>
 
 extern const AP_HAL::HAL& hal;
 
 using namespace HALSITL;
 
 void SITL_State::init(int argc, char * const argv[]) {
+    int opt;
+    const struct GetOptLong::option options[] = {
+        {"help",            false,  0, 'h'},
+        {"instance",        true,   0, 'I'},
+    };
 
+    setvbuf(stdout, (char *)0, _IONBF, 0);
+    setvbuf(stderr, (char *)0, _IONBF, 0);
+
+    GetOptLong gopt(argc, argv, "hI:",
+                    options);
+
+    while((opt = gopt.getoption()) != -1) {
+        switch (opt) {
+            case 'I':
+                _instance = atoi(gopt.optarg);
+                break;
+            default:
+                printf("Options:\n"
+                    "\t--help|-h                display this help information\n"
+                    "\t--instance|-I N          set instance of SITL Periph\n");
+                exit(1);
+        }
+    }
+
+    printf("Running Instance: %d\n", _instance);
 }
 
 void SITL_State::wait_clock(uint64_t wait_time_usec) {
@@ -33,18 +59,10 @@ void SITL_State::wait_clock(uint64_t wait_time_usec) {
     }
 }
 
+// when Periph can use SITL simulated devices we should remove these
+// stubs:
+ssize_t SITL::SerialDevice::read_from_device(char*, unsigned int) const { return -1; }
 
-int SITL_State::gps_pipe(uint8_t index) {
-    return 0;
-}
-
-int SITL_State::sim_fd(const char *name, const char *arg) {
-    return 0;
-}
-
-int SITL_State::sim_fd_write(const char *name) {
-    return 0;
-}
-
+ssize_t SITL::SerialDevice::write_to_device(char const*, unsigned int) const { return -1; }
 
 #endif //CONFIG_HAL_BOARD == HAL_BOARD_SITL && defined(HAL_BUILD_AP_PERIPH)

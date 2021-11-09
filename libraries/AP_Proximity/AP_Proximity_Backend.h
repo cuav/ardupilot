@@ -14,14 +14,17 @@
  */
 #pragma once
 
-#include <AP_Common/AP_Common.h>
-#include <AP_HAL/AP_HAL.h>
 #include "AP_Proximity.h"
+
+#if HAL_PROXIMITY_ENABLED
+#include <AP_HAL/AP_HAL.h>
+#include <AP_Common/AP_Common.h>
 #include <AP_Common/Location.h>
 #include "AP_Proximity_Boundary_3D.h"
 
 #define PROXIMITY_GND_DETECT_THRESHOLD 1.0f // set ground detection threshold to be 1 meters
 #define PROXIMITY_ALT_DETECT_TIMEOUT_MS 500 // alt readings should arrive within this much time
+#define PROXIMITY_BOUNDARY_3D_TIMEOUT_MS 750 // we should check the 3D boundary faces after every this many ms
 
 class AP_Proximity_Backend
 {
@@ -35,6 +38,9 @@ public:
 
     // update the state structure
     virtual void update() = 0;
+
+    // timeout faces that have not received data recently and update filter frequencies
+    void boundary_3D_checks();
 
     // get maximum and minimum distances (in meters) of sensor
     virtual float distance_max() const = 0;
@@ -54,7 +60,7 @@ public:
     
     // returns shortest distance to "obstacle_num" obstacle, from a line segment formed between "seg_start" and "seg_end"
     // used in GPS based Simple Avoidance
-    float distance_to_obstacle(const uint8_t obstacle_num, const Vector3f& seg_start, const Vector3f& seg_end, Vector3f& closest_point) const { return boundary.distance_to_obstacle(obstacle_num , seg_start, seg_end, closest_point); } 
+    bool closest_point_from_segment_to_obstacle(const uint8_t obstacle_num, const Vector3f& seg_start, const Vector3f& seg_end, Vector3f& closest_point) const { return boundary.closest_point_from_segment_to_obstacle(obstacle_num , seg_start, seg_end, closest_point); }
 
     // get distance and angle to closest object (used for pre-arm check)
     //   returns true on success, false if no valid readings
@@ -106,6 +112,8 @@ protected:
     };
     static void database_push(float angle, float pitch, float distance, uint32_t timestamp_ms, const Vector3f &current_pos, const Matrix3f &body_to_ned);
 
+    uint32_t _last_timeout_check_ms;  // time when boundary was checked for non-updated valid faces
+
     // used for ground detection
     uint32_t _last_downward_update_ms;
     bool     _rangefinder_use;
@@ -118,3 +126,5 @@ protected:
     // Methods to manipulate 3D boundary in this class
     AP_Proximity_Boundary_3D boundary;
 };
+
+#endif // HAL_PROXIMITY_ENABLED

@@ -14,6 +14,8 @@
  */
 
 #include "AP_Proximity.h"
+
+#if HAL_PROXIMITY_ENABLED
 #include "AP_Proximity_LightWareSF40C_v09.h"
 #include "AP_Proximity_RPLidarA2.h"
 #include "AP_Proximity_TeraRangerTower.h"
@@ -37,7 +39,7 @@ const AP_Param::GroupInfo AP_Proximity::var_info[] = {
     // @Values: 0:None,7:LightwareSF40c,1:LightWareSF40C-legacy,2:MAVLink,3:TeraRangerTower,4:RangeFinder,5:RPLidarA2,6:TeraRangerTowerEvo,8:LightwareSF45B,10:SITL,12:AirSimSITL
     // @RebootRequired: True
     // @User: Standard
-    AP_GROUPINFO("_TYPE",   1, AP_Proximity, _type[0], 0),
+    AP_GROUPINFO_FLAGS("_TYPE",   1, AP_Proximity, _type[0], 0, AP_PARAM_FLAG_ENABLE),
 
     // @Param: _ORIENT
     // @DisplayName: Proximity sensor orientation
@@ -155,7 +157,7 @@ const AP_Param::GroupInfo AP_Proximity::var_info[] = {
     // @Description: Ignore proximity data that is within 1 meter of the ground below the vehicle. This requires a downward facing rangefinder
     // @Values: 0:Disabled, 1:Enabled
     // @User: Standard
-    AP_GROUPINFO_FRAME("_IGN_GND", 16, AP_Proximity, _ign_gnd_enable, 1, AP_PARAM_FRAME_COPTER | AP_PARAM_FRAME_HELI | AP_PARAM_FRAME_TRICOPTER),
+    AP_GROUPINFO_FRAME("_IGN_GND", 16, AP_Proximity, _ign_gnd_enable, 0, AP_PARAM_FRAME_COPTER | AP_PARAM_FRAME_HELI | AP_PARAM_FRAME_TRICOPTER),
 
     // @Param: _LOG_RAW
     // @DisplayName: Proximity raw distances log
@@ -163,6 +165,14 @@ const AP_Param::GroupInfo AP_Proximity::var_info[] = {
     // @Values: 0:Off, 1:On
     // @User: Advanced
     AP_GROUPINFO("_LOG_RAW", 17, AP_Proximity, _raw_log_enable, 0),
+
+    // @Param: _FILT
+    // @DisplayName: Proximity filter cutoff frequency
+    // @Description: Cutoff frequency for low pass filter applied to each face in the proximity boundary
+    // @Units: Hz
+    // @Range: 0 20
+    // @User: Advanced
+    AP_GROUPINFO("_FILT", 18, AP_Proximity, _filt_freq, 0.25f),
 
     AP_GROUPEND
 };
@@ -207,6 +217,7 @@ void AP_Proximity::update(void)
             continue;
         }
         drivers[i]->update();
+        drivers[i]->boundary_3D_checks();
     }
 
     // work out primary instance - first sensor returning good data
@@ -387,12 +398,12 @@ bool AP_Proximity::get_obstacle(uint8_t obstacle_num, Vector3f& vec_to_obstacle)
 
 // returns shortest distance to "obstacle_num" obstacle, from a line segment formed between "seg_start" and "seg_end"
 // used in GPS based Simple Avoidance
-float AP_Proximity::distance_to_obstacle(uint8_t obstacle_num, const Vector3f& seg_start, const Vector3f& seg_end, Vector3f& closest_point) const
+bool AP_Proximity::closest_point_from_segment_to_obstacle(uint8_t obstacle_num, const Vector3f& seg_start, const Vector3f& seg_end, Vector3f& closest_point) const
 {
     if (!valid_instance(primary_instance)) {
-        return FLT_MAX;
+        return false;
     }
-    return drivers[primary_instance]->distance_to_obstacle(obstacle_num, seg_start, seg_end, closest_point);
+    return drivers[primary_instance]->closest_point_from_segment_to_obstacle(obstacle_num, seg_start, seg_end, closest_point);
 }
 
 // get distance and angle to closest object (used for pre-arm check)
@@ -502,3 +513,5 @@ AP_Proximity *proximity()
 }
 
 }
+
+#endif // HAL_PROXIMITY_ENABLED

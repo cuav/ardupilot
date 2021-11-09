@@ -7,13 +7,21 @@
 
 #define AC_POLYFENCE_FENCE_POINT_PROTOCOL_SUPPORT 1
 
+// CIRCLE_INCLUSION_INT stores the radius an a 32-bit integer in
+// metres.  This was a bug, and CIRCLE_INCLUSION was created to store
+// as a 32-bit float instead.  We save as _INT in the case that the
+// radius looks like an integer as a backwards-compatability measure.
+// For 4.2 we might consider only loading _INT and always saving as
+// float, and in 4.3 considering _INT invalid
 enum class AC_PolyFenceType {
-    END_OF_STORAGE    = 99,
-    POLYGON_INCLUSION = 98,
-    POLYGON_EXCLUSION = 97,
-    CIRCLE_EXCLUSION  = 96,
-    RETURN_POINT      = 95,
-    CIRCLE_INCLUSION  = 94,
+    END_OF_STORAGE        = 99,
+    POLYGON_INCLUSION     = 98,
+    POLYGON_EXCLUSION     = 97,
+    CIRCLE_EXCLUSION_INT  = 96,
+    RETURN_POINT          = 95,
+    CIRCLE_INCLUSION_INT  = 94,
+    CIRCLE_EXCLUSION      = 93,
+    CIRCLE_INCLUSION      = 92,
 };
 
 // a FenceItem is just a means of passing data about an item into
@@ -330,15 +338,7 @@ private:
     bool scale_latlon_from_origin(const Location &origin,
                                   const Vector2l &point,
                                   Vector2f &pos_cm) WARN_IF_UNUSED;
-
-    // read_scaled_latlon_from_storage - reads a latitude/longitude
-    // from offset in permanent storage, transforms them into an
-    // offset-from-origin and deposits the result into pos_cm.
-    // read_offset is increased by the storage space used by the
-    // latitude/longitude
-    bool read_scaled_latlon_from_storage(const Location &origin,
-                                         uint16_t &read_offset,
-                                         Vector2f &pos_cm) WARN_IF_UNUSED;
+   
     // read_polygon_from_storage - reads vertex_count
     // latitude/longitude points from offset in permanent storage,
     // transforms them into an offset-from-origin and deposits the

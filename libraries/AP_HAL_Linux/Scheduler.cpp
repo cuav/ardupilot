@@ -40,6 +40,9 @@ extern const AP_HAL::HAL& hal;
     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PXFMINI
 #define APM_LINUX_RCIN_RATE             500
 #define APM_LINUX_IO_RATE               50
+#elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_OBAL_V1
+#define APM_LINUX_RCIN_RATE             50
+#define APM_LINUX_IO_RATE               50
 #else
 #define APM_LINUX_RCIN_RATE             100
 #define APM_LINUX_IO_RATE               50
@@ -55,7 +58,9 @@ extern const AP_HAL::HAL& hal;
     }
 
 Scheduler::Scheduler()
-{ }
+{
+    CPU_ZERO(&_cpu_affinity);
+}
 
 
 void Scheduler::init_realtime()
@@ -81,6 +86,17 @@ void Scheduler::init_realtime()
     }
 }
 
+void Scheduler::init_cpu_affinity()
+{
+    if (!CPU_COUNT(&_cpu_affinity)) {
+        return;
+    }
+
+    if (sched_setaffinity(0, sizeof(_cpu_affinity), &_cpu_affinity) != 0) {
+        AP_HAL::panic("Failed to set affinity for main process: %m");
+    }
+}
+
 void Scheduler::init()
 {
     int ret;
@@ -100,6 +116,7 @@ void Scheduler::init()
     _main_ctx = pthread_self();
 
     init_realtime();
+    init_cpu_affinity();
 
     /* set barrier to N + 1 threads: worker threads + main */
     unsigned n_threads = ARRAY_SIZE(sched_table) + 1;
@@ -348,16 +365,9 @@ void Scheduler::teardown()
     _uart_thread.join();
 }
 
-/*
-  create a new thread
-*/
-bool Scheduler::thread_create(AP_HAL::MemberProc proc, const char *name, uint32_t stack_size, priority_base base, int8_t priority)
+// calculates an integer to be used as the priority for a newly-created thread
+uint8_t Scheduler::calculate_thread_priority(priority_base base, int8_t priority) const
 {
-    Thread *thread = new Thread{(Thread::task_t)proc};
-    if (!thread) {
-        return false;
-    }
-
     uint8_t thread_priority = APM_LINUX_IO_PRIORITY;
     static const struct {
         priority_base base;
@@ -381,6 +391,21 @@ bool Scheduler::thread_create(AP_HAL::MemberProc proc, const char *name, uint32_
             break;
         }
     }
+
+    return thread_priority;
+}
+
+/*
+  create a new thread
+*/
+bool Scheduler::thread_create(AP_HAL::MemberProc proc, const char *name, uint32_t stack_size, priority_base base, int8_t priority)
+{
+    Thread *thread = new Thread{(Thread::task_t)proc};
+    if (!thread) {
+        return false;
+    }
+
+    const uint8_t thread_priority = calculate_thread_priority(base, priority);
 
     // Add 256k to HAL-independent requested stack size
     thread->set_stack_size(256 * 1024 + stack_size);

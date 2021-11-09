@@ -24,10 +24,6 @@
 #define SERVO_OUT_RCIN_MAX      16  // SRV_Channel::k_rcin1 ... SRV_Channel::k_rcin16
 #define SERVO_OUT_MOTOR_MAX     12  // SRV_Channel::k_motor1 ... SRV_Channel::k_motor8, SRV_Channel::k_motor9 ... SRV_Channel::k_motor12
 
-#if HAL_PWM_COUNT == 0
-    #error "You must define a PWM output in your hwdef.dat"
-#endif
-
 extern const AP_HAL::HAL &hal;
 
 void AP_Periph_FW::rcout_init()
@@ -35,19 +31,33 @@ void AP_Periph_FW::rcout_init()
     // start up with safety enabled. This disables the pwm output until we receive an packet from the rempte system
     hal.rcout->force_safety_on();
 
+#if HAL_PWM_COUNT > 0
     for (uint8_t i=0; i<HAL_PWM_COUNT; i++) {
         servo_channels.set_default_function(i, SRV_Channel::Aux_servo_function_t(SRV_Channel::k_rcin1 + i));
     }
+#endif
 
     for (uint8_t i=0; i<SERVO_OUT_RCIN_MAX; i++) {
         SRV_Channels::set_angle(SRV_Channel::Aux_servo_function_t(SRV_Channel::k_rcin1 + i), 1000);
     }
+
+    uint16_t esc_mask = 0;
     for (uint8_t i=0; i<SERVO_OUT_MOTOR_MAX; i++) {
-        SRV_Channels::set_angle(SRV_Channels::get_motor_function(i), UAVCAN_ESC_MAX_VALUE);
+        SRV_Channels::set_range(SRV_Channels::get_motor_function(i), UAVCAN_ESC_MAX_VALUE);
+        uint8_t chan;
+        if (SRV_Channels::find_channel(SRV_Channels::get_motor_function(i), chan)) {
+            esc_mask |= 1U << chan;
+        }
     }
+
+    // setup ESCs with the desired PWM type, allowing for DShot
+    hal.rcout->set_output_mode(esc_mask, (AP_HAL::RCOutput::output_mode)g.esc_pwm_type.get());
 
     // run this once and at 1Hz to configure aux and esc ranges
     rcout_init_1Hz();
+
+    // run DShot at 1kHz
+    hal.rcout->set_dshot_rate(0, 400);
 }
 
 void AP_Periph_FW::rcout_init_1Hz()
@@ -68,7 +78,8 @@ void AP_Periph_FW::rcout_esc(int16_t *rc, uint8_t num_channels)
 
     const uint8_t channel_count = MIN(num_channels, SERVO_OUT_MOTOR_MAX);
     for (uint8_t i=0; i<channel_count; i++) {
-        SRV_Channels::set_output_scaled(SRV_Channels::get_motor_function(i), rc[i]);
+        // we don't support motor reversal yet on ESCs in AP_Periph
+        SRV_Channels::set_output_scaled(SRV_Channels::get_motor_function(i), MAX(0,rc[i]));
     }
 
     rcout_has_new_data_to_update = true;
@@ -76,6 +87,7 @@ void AP_Periph_FW::rcout_esc(int16_t *rc, uint8_t num_channels)
 
 void AP_Periph_FW::rcout_srv(uint8_t actuator_id, const float command_value)
 {
+#if HAL_PWM_COUNT > 0
     if ((actuator_id == 0) || (actuator_id > HAL_PWM_COUNT)) {
         // not supported or out of range
         return;
@@ -85,6 +97,7 @@ void AP_Periph_FW::rcout_srv(uint8_t actuator_id, const float command_value)
     SRV_Channels::set_output_norm(function, command_value);
 
     rcout_has_new_data_to_update = true;
+#endif
 }
 
 void AP_Periph_FW::rcout_handle_safety_state(uint8_t safety_state)

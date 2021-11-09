@@ -18,8 +18,6 @@
 
 #include <AP_HAL/AP_HAL.h>
 
-#if CONFIG_HAL_BOARD == HAL_BOARD_LINUX
-
 #include <AP_HAL/utility/sparse-endian.h>
 #include <AP_HAL_Linux/GPIO.h>
 #include <AP_Math/AP_Math.h>
@@ -121,20 +119,45 @@ struct PACKED RawData {
 };
 
 AP_InertialSensor_BMI160::AP_InertialSensor_BMI160(AP_InertialSensor &imu,
-                                                   AP_HAL::OwnPtr<AP_HAL::Device> dev)
+                                                   AP_HAL::OwnPtr<AP_HAL::Device> dev,
+                                                   enum Rotation rotation)
     : AP_InertialSensor_Backend(imu)
     , _dev(std::move(dev))
+    , _rotation(rotation)
 {
 }
 
 AP_InertialSensor_Backend *
 AP_InertialSensor_BMI160::probe(AP_InertialSensor &imu,
-                                AP_HAL::OwnPtr<AP_HAL::SPIDevice> dev)
+                                AP_HAL::OwnPtr<AP_HAL::SPIDevice> dev,
+                                enum Rotation rotation)
 {
     if (!dev) {
         return nullptr;
     }
-    auto sensor = new AP_InertialSensor_BMI160(imu, std::move(dev));
+    auto sensor = new AP_InertialSensor_BMI160(imu, std::move(dev), rotation);
+
+    if (!sensor) {
+        return nullptr;
+    }
+
+    if (!sensor->_init()) {
+        delete sensor;
+        return nullptr;
+    }
+
+    return sensor;
+}
+
+AP_InertialSensor_Backend *
+AP_InertialSensor_BMI160::probe(AP_InertialSensor &imu,
+                                AP_HAL::OwnPtr<AP_HAL::I2CDevice> dev,
+                                enum Rotation rotation)
+{
+    if (!dev) {
+        return nullptr;
+    }
+    auto sensor = new AP_InertialSensor_BMI160(imu, std::move(dev), rotation);
 
     if (!sensor) {
         return nullptr;
@@ -178,8 +201,10 @@ void AP_InertialSensor_BMI160::start()
 
     _dev->get_semaphore()->give();
 
-    _accel_instance = _imu.register_accel(BMI160_ODR_TO_HZ(BMI160_ODR), _dev->get_bus_id_devtype(DEVTYPE_BMI160));
-    _gyro_instance = _imu.register_gyro(BMI160_ODR_TO_HZ(BMI160_ODR),   _dev->get_bus_id_devtype(DEVTYPE_BMI160));
+    if (!_imu.register_accel(_accel_instance, BMI160_ODR_TO_HZ(BMI160_ODR), _dev->get_bus_id_devtype(DEVTYPE_BMI160)) ||
+        !_imu.register_gyro(_gyro_instance, BMI160_ODR_TO_HZ(BMI160_ODR),   _dev->get_bus_id_devtype(DEVTYPE_BMI160))) {
+        return;
+    }
 
     /* Call _poll_data() at 1kHz */
     _dev->register_periodic_callback(1000,
@@ -389,10 +414,8 @@ read_fifo_read_data:
                       (float)(int16_t)le16toh(raw_data[i].gyro.y),
                       (float)(int16_t)le16toh(raw_data[i].gyro.z)};
 
-#if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_AERO
-        accel.rotate(ROTATION_ROLL_180);
-        gyro.rotate(ROTATION_ROLL_180);
-#endif
+        accel.rotate(_rotation);
+        gyro.rotate(_rotation);
 
         accel *= _accel_scale;
         gyro *= _gyro_scale;
@@ -492,5 +515,3 @@ bool AP_InertialSensor_BMI160::_init()
 
     return ret;
 }
-
-#endif

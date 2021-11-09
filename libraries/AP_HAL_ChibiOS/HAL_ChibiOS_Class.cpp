@@ -110,6 +110,10 @@ static Empty::Flash flashDriver;
 static ChibiOS::CANIface* canDrivers[HAL_NUM_CAN_IFACES];
 #endif
 
+#if HAL_USE_WSPI == TRUE && defined(HAL_QSPI_DEVICE_LIST)
+static ChibiOS::QSPIDeviceManager qspiDeviceManager;
+#endif
+
 #if HAL_WITH_IO_MCU
 HAL_UART_IO_DRIVER;
 #include <AP_IOMCU/AP_IOMCU.h>
@@ -129,6 +133,11 @@ HAL_ChibiOS::HAL_ChibiOS() :
         &uartIDriver,
         &i2cDeviceManager,
         &spiDeviceManager,
+#if HAL_USE_WSPI == TRUE && defined(HAL_QSPI_DEVICE_LIST)
+        &qspiDeviceManager,
+#else
+        nullptr,
+#endif
         &analogIn,
         &storageDriver,
         &uartGDriver,
@@ -161,8 +170,8 @@ void hal_chibios_set_priority(uint8_t priority)
 {
     chSysLock();
 #if CH_CFG_USE_MUTEXES == TRUE
-    if ((daemon_task->prio == daemon_task->realprio) || (priority > daemon_task->prio)) {
-      daemon_task->prio = priority;
+    if ((daemon_task->hdr.pqueue.prio == daemon_task->realprio) || (priority > daemon_task->hdr.pqueue.prio)) {
+      daemon_task->hdr.pqueue.prio = priority;
     }
     daemon_task->realprio = priority;
 #endif
@@ -229,6 +238,7 @@ static void main_loop()
     utilInstance.apply_persistent_params();
 #endif
 
+#if !defined(DISABLE_WATCHDOG)
 #ifdef IOMCU_FW
     stm32_watchdog_init();
 #elif !defined(HAL_BOOTLOADER_BUILD)
@@ -241,6 +251,7 @@ static void main_loop()
         INTERNAL_ERROR(AP_InternalError::error_t::watchdog_reset);
     }
 #endif // IOMCU_FW
+#endif // DISABLE_WATCHDOG
 
     schedulerInstance.watchdog_pat();
 
@@ -290,7 +301,7 @@ void HAL_ChibiOS::run(int argc, char * const argv[], Callbacks* callbacks) const
 #endif
 
 #ifdef HAL_STDOUT_SERIAL
-    //STDOUT Initialistion
+    //STDOUT Initialisation
     SerialConfig stdoutcfg =
     {
       HAL_STDOUT_BAUDRATE,
@@ -301,7 +312,6 @@ void HAL_ChibiOS::run(int argc, char * const argv[], Callbacks* callbacks) const
     sdStart((SerialDriver*)&HAL_STDOUT_SERIAL, &stdoutcfg);
 #endif
 
-    assert(callbacks);
     g_callbacks = callbacks;
 
     //Takeover main

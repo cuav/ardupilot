@@ -61,9 +61,6 @@ protected:
 
     // log PIDs at full rate for during twitch
     virtual void log_pids() = 0;
-    
-    // start tune - virtual so that vehicle code can add additional pre-conditions
-    virtual bool start(void);
 
     // return true if we have a good position estimate
     virtual bool position_ok();
@@ -74,6 +71,9 @@ protected:
                         AC_PosControl *pos_control,
                         AP_AHRS_View *ahrs_view,
                         AP_InertialNav *inertial_nav);
+
+    // initialise position controller
+    bool init_position_controller();
 
 private:
     void control_attitude();
@@ -158,16 +158,16 @@ private:
     };
     void load_gains(enum GainType gain_type);
 
-    TuneMode mode                : 2;    // see TuneMode for what modes are allowed
-    bool     pilot_override      : 1;    // true = pilot is overriding controls so we suspend tuning temporarily
-    AxisType axis                : 2;    // see AxisType for which things can be tuned
-    bool     positive_direction  : 1;    // false = tuning in negative direction (i.e. left for roll), true = positive direction (i.e. right for roll)
-    StepType step                : 2;    // see StepType for what steps are performed
-    TuneType tune_type           : 3;    // see TuneType
-    bool     ignore_next         : 1;    // true = ignore the next test
-    bool     twitch_first_iter   : 1;    // true on first iteration of a twitch (used to signal we must step the attitude or rate target)
-    bool     use_poshold         : 1;    // true = enable position hold
-    bool     have_position       : 1;    // true = start_position is value
+    TuneMode mode;                       // see TuneMode for what modes are allowed
+    bool     pilot_override;             // true = pilot is overriding controls so we suspend tuning temporarily
+    AxisType axis;                       // see AxisType for which things can be tuned
+    bool     positive_direction;         // false = tuning in negative direction (i.e. left for roll), true = positive direction (i.e. right for roll)
+    StepType step;                       // see StepType for what steps are performed
+    TuneType tune_type;                  // see TuneType
+    bool     ignore_next;                // true = ignore the next test
+    bool     twitch_first_iter;          // true on first iteration of a twitch (used to signal we must step the attitude or rate target)
+    bool     use_poshold;                // true = enable position hold
+    bool     have_position;              // true = start_position is value
     Vector3f start_position;
     uint8_t  axes_completed;             // bitmask of completed axes
 

@@ -39,7 +39,9 @@
 
 #include "UARTDriver.h"
 #include "SITL_State.h"
+#if HAL_GCS_ENABLED
 #include <AP_HAL/utility/packetise.h>
+#endif
 
 extern const AP_HAL::HAL& hal;
 
@@ -64,11 +66,11 @@ void UARTDriver::begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace)
     if (strcmp(path, "GPS1") == 0) {
         /* gps */
         _connected = true;
-        _fd = _sitlState->gps_pipe(0);
+        _sim_serial_device = _sitlState->create_serial_sim("gps:1", "");
     } else if (strcmp(path, "GPS2") == 0) {
         /* 2nd gps */
         _connected = true;
-        _fd = _sitlState->gps_pipe(1);
+        _sim_serial_device = _sitlState->create_serial_sim("gps:2", "");
     } else {
         /* parse type:args:flags string for path. 
            For example:
@@ -104,6 +106,9 @@ void UARTDriver::begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace)
             _uart_baudrate = baudrate;
             _uart_start_connection();
         } else if (strcmp(devtype, "fifo") == 0) {
+            if(strcmp(args1, "gps") == 0) {
+                UNUSED_RESULT(asprintf(&args1, "/tmp/gps_fifo%d", (int)_sitlState->get_instance()));
+            }
             ::printf("Reading FIFO file @ %s\n", args1);
             _fd = ::open(args1, O_RDONLY | O_NONBLOCK);
             if (_fd >= 0) {
@@ -115,8 +120,7 @@ void UARTDriver::begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace)
             if (!_connected) {
                 ::printf("SIM connection %s:%s on port %u\n", args1, args2, _portNumber);
                 _connected = true;
-                _fd = _sitlState->sim_fd(args1, args2);
-                _fd_write = _sitlState->sim_fd_write(args1);
+                _sim_serial_device = _sitlState->create_serial_sim(args1, args2);
             }
         } else if (strcmp(devtype, "udpclient") == 0) {
             // udp client connection
@@ -134,6 +138,9 @@ void UARTDriver::begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace)
                 ::printf("UDP multicast connection %s:%u\n", ip, port);
                 _udp_start_multicast(ip, port);
             }
+        } else if (strcmp(devtype,"none") == 0) {
+            // skipping port
+            ::printf("Skipping port %s\n", args1);
         } else {
             AP_HAL::panic("Invalid device path: %s", path);
         }
@@ -174,12 +181,16 @@ uint32_t UARTDriver::txspace(void)
 
 int16_t UARTDriver::read(void)
 {
-    if (available() <= 0) {
+    uint8_t c;
+    if (read(&c, 1) == 0) {
         return -1;
     }
-    uint8_t c;
-    _readbuffer.read(&c, 1);
     return c;
+}
+
+ssize_t UARTDriver::read(uint8_t *buffer, uint16_t count)
+{
+    return _readbuffer.read(buffer, count);
 }
 
 bool UARTDriver::discard_input(void)
@@ -190,6 +201,26 @@ bool UARTDriver::discard_input(void)
 
 void UARTDriver::flush(void)
 {
+    // flush the write buffer - but don't fail and don't
+    // infinitely-loop.  This is not a good definition of "flush", but
+    // it was judged that we had to return from this function even if
+    // we hadn't actually done our job.
+    uint32_t start_ms = AP_HAL::millis();
+    while (AP_HAL::millis() - start_ms < 1000) {
+        if (_writebuffer.available() == 0) {
+            break;
+        }
+        _timer_tick();
+    }
+
+    // ensure that the outbound TCP queue is also empty...
+    start_ms = AP_HAL::millis();
+    while (AP_HAL::millis() - start_ms < 1000) {
+        if (((HALSITL::UARTDriver*)hal.serial(0))->get_system_outqueue_length() == 0) {
+            break;
+        }
+        usleep(1000);
+    }
 }
 
 // size_t UARTDriver::write(uint8_t c)
@@ -214,17 +245,8 @@ size_t UARTDriver::write(const uint8_t *buffer, size_t size)
         return 0;
     }
     if (_unbuffered_writes) {
-        // write buffer straight to the file descriptor
-        int fd = _fd_write;
-        if (fd == -1) {
-            fd = _fd;
-        }
-        const ssize_t nwritten = ::write(fd, buffer, size);
+        const ssize_t nwritten = ::write(_fd, buffer, size);
         if (nwritten == -1 && errno != EAGAIN && _uart_path) {
-            if (_fd_write != -1) {
-                close(_fd_write);
-                _fd_write = -1;
-            }
             close(_fd);
             _fd = -1;
             _connected = false;
@@ -444,7 +466,9 @@ void UARTDriver::_udp_start_client(const char *address, uint16_t port)
     }
 
     _is_udp = true;
+#if HAL_GCS_ENABLED
     _packetise = true;
+#endif
     _connected = true;
 }
 
@@ -653,7 +677,7 @@ void UARTDriver::_timer_tick(void)
     ssize_t nwritten;
     uint32_t max_bytes = 10000;
 #if !defined(HAL_BUILD_AP_PERIPH)
-    SITL::SITL *_sitl = AP::sitl();
+    SITL::SIM *_sitl = AP::sitl();
     if (_sitl && _sitl->telem_baudlimit_enable) {
         // limit byte rate to configured baudrate
         uint32_t now = AP_HAL::micros();
@@ -668,9 +692,11 @@ void UARTDriver::_timer_tick(void)
     if (_packetise) {
         uint16_t n = _writebuffer.available();
         n = MIN(n, max_bytes);
+#if HAL_GCS_ENABLED
         if (n > 0) {
             n = mavlink_packetise(_writebuffer, n);
         }
+#endif
         if (n > 0) {
             // keep as a single UDP packet
             uint8_t tmpbuf[n];
@@ -685,17 +711,11 @@ void UARTDriver::_timer_tick(void)
         const uint8_t *readptr = _writebuffer.readptr(navail);
         if (readptr && navail > 0) {
             navail = MIN(navail, max_bytes);
-            if (!_use_send_recv) {
-                int fd = _fd_write;
-                if (fd == -1) {
-                    fd = _fd;
-                }
-                nwritten = ::write(fd, readptr, navail);
+            if (_sim_serial_device != nullptr) {
+                nwritten = _sim_serial_device->write_to_device((const char*)readptr, navail);
+            } else if (!_use_send_recv) {
+                nwritten = ::write(_fd, readptr, navail);
                 if (nwritten == -1 && errno != EAGAIN && _uart_path) {
-                    if (_fd_write != -1){
-                        close(_fd_write);
-                        _fd_write = -1;
-                    }
                     close(_fd);
                     _fd = -1;
                     _connected = false;
@@ -740,6 +760,8 @@ void UARTDriver::_timer_tick(void)
                 nread = 0;
             }
         }
+    } else if (_sim_serial_device != nullptr) {
+        nread = _sim_serial_device->read_from_device(buf, space);
     } else if (!_use_send_recv) {
         if (!_select_check(_fd)) {
             return;

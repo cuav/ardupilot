@@ -45,7 +45,7 @@ uint16_t AP_Param::sentinal_offset;
 // singleton instance
 AP_Param *AP_Param::_singleton;
 
-#define ENABLE_DEBUG 1
+#define ENABLE_DEBUG 0
 
 #if ENABLE_DEBUG
  # define Debug(fmt, args ...)  do {::printf("%s:%d: " fmt "\n", __FUNCTION__, __LINE__, ## args); } while(0)
@@ -53,10 +53,10 @@ AP_Param *AP_Param::_singleton;
  # define Debug(fmt, args ...)
 #endif
 
-#ifdef HAL_NO_GCS
-#define GCS_SEND_PARAM(name, type, v)
-#else
+#if HAL_GCS_ENABLED
 #define GCS_SEND_PARAM(name, type, v) gcs().send_parameter_value(name, type, v)
+#else
+#define GCS_SEND_PARAM(name, type, v)
 #endif
 
 // Note about AP_Vector3f handling.
@@ -696,11 +696,11 @@ void AP_Param::set_key(Param_header &phdr, uint16_t key)
  */
 bool AP_Param::is_sentinal(const Param_header &phdr)
 {
-    // note that this is an ||, not an &&, as this makes us more
-    // robust to power off while adding a variable to EEPROM
+    // note that this is an ||, not an && on the key and group, as
+    // this makes us more robust to power off while adding a variable
+    // to EEPROM
     if (phdr.type == _sentinal_type ||
-        get_key(phdr) == _sentinal_key ||
-        phdr.group_element == _sentinal_group) {
+        get_key(phdr) == _sentinal_key) {
         return true;
     }
     // also check for 0xFFFFFFFF and 0x00000000, which are the fill
@@ -1034,6 +1034,21 @@ bool AP_Param::find_top_level_key_by_pointer(const void *ptr, uint16_t &key)
     return false;
 }
 
+/*
+  fetch a parameter value based on the index within a group. This
+  is used to find the old value of a parameter that has been
+  removed from an object.
+*/
+bool AP_Param::get_param_by_index(void *obj_ptr, uint8_t idx, ap_var_type old_ptype, void *pvalue)
+{
+    uint16_t key;
+    if (!find_top_level_key_by_pointer(obj_ptr, key)) {
+        return false;
+    }
+    const ConversionInfo type_info = {key, idx, old_ptype, nullptr };
+    return AP_Param::find_old_parameter(&type_info, (AP_Param *)pvalue);
+}
+
 
 // Find a object by name.
 //
@@ -1082,7 +1097,7 @@ void AP_Param::notify() const {
 /*
   Save the variable to HAL storage, synchronous version
 */
-void AP_Param::save_sync(bool force_save)
+void AP_Param::save_sync(bool force_save, bool send_to_gcs)
 {
     uint32_t group_element = 0;
     const struct GroupInfo *ginfo;
@@ -1129,7 +1144,9 @@ void AP_Param::save_sync(bool force_save)
     if (scan(&phdr, &ofs)) {
         // found an existing copy of the variable
         eeprom_write_check(ap, ofs+sizeof(phdr), type_size((enum ap_var_type)phdr.type));
-        send_parameter(name, (enum ap_var_type)phdr.type, idx);
+        if (send_to_gcs) {
+            send_parameter(name, (enum ap_var_type)phdr.type, idx);
+        }
         return;
     }
     if (ofs == (uint16_t) ~0) {
@@ -1146,7 +1163,9 @@ void AP_Param::save_sync(bool force_save)
             v2 = get_default_value(this, &info->def_value);
         }
         if (is_equal(v1,v2) && !force_save) {
-            GCS_SEND_PARAM(name, (enum ap_var_type)info->type, v2);
+            if (send_to_gcs) {
+                GCS_SEND_PARAM(name, (enum ap_var_type)info->type, v2);
+            }
             return;
         }
         if (!force_save &&
@@ -1154,7 +1173,9 @@ void AP_Param::save_sync(bool force_save)
              (fabsf(v1-v2) < 0.0001f*fabsf(v1)))) {
             // for other than 32 bit integers, we accept values within
             // 0.01 percent of the current value as being the same
-            GCS_SEND_PARAM(name, (enum ap_var_type)info->type, v2);
+            if (send_to_gcs) {
+                GCS_SEND_PARAM(name, (enum ap_var_type)info->type, v2);
+            }
             return;
         }
     }
@@ -1170,7 +1191,9 @@ void AP_Param::save_sync(bool force_save)
     eeprom_write_check(ap, ofs+sizeof(phdr), type_size((enum ap_var_type)phdr.type));
     eeprom_write_check(&phdr, ofs, sizeof(phdr));
 
-    send_parameter(name, (enum ap_var_type)phdr.type, idx);
+    if (send_to_gcs) {
+        send_parameter(name, (enum ap_var_type)phdr.type, idx);
+    }
 }
 
 /*
@@ -1192,8 +1215,8 @@ void AP_Param::save(bool force_save)
     }
     while (!save_queue.push(p)) {
         // if we can't save to the queue
-        if (hal.util->get_soft_armed() || !hal.scheduler->in_main_thread()) {
-            // if we are armed then don't sleep, instead we lose the
+        if (hal.util->get_soft_armed() && hal.scheduler->in_main_thread()) {
+            // if we are armed in main thread then don't sleep, instead we lose the
             // parameter save
             return;
         }
@@ -1213,7 +1236,7 @@ void AP_Param::save_io_handler(void)
 {
     struct param_save p;
     while (save_queue.pop(p)) {
-        p.param->save_sync(p.force_save);
+        p.param->save_sync(p.force_save, true);
     }
     if (hal.scheduler->is_system_initialized()) {
         // pay the cost of parameter counting in the IO thread
@@ -1468,8 +1491,6 @@ bool AP_Param::load_all()
     
     while (ofs < _storage.size()) {
         _storage.read_block(&phdr, ofs, sizeof(phdr));
-        // note that this is an || not an && for robustness
-        // against power off while adding a variable
         if (is_sentinal(phdr)) {
             // we've reached the sentinal
             sentinal_offset = ofs;
@@ -1660,6 +1681,9 @@ AP_Param *AP_Param::next_group(const uint16_t vindex, const struct GroupInfo *gr
                     (group_info[i].flags & AP_PARAM_FLAG_ENABLE) &&
                     ((AP_Int8 *)ret)->get() == 0) {
                     token->last_disabled = 1;
+                }
+                if (group_info[i].flags & AP_PARAM_FLAG_HIDDEN) {
+                    continue;
                 }
                 return ret;
             }
@@ -1871,22 +1895,21 @@ void AP_Param::convert_old_parameters(const struct ConversionInfo *conversion_ta
     flush();
 }
 
-/*
-  move old class variables for a class that was sub-classed to one that isn't
-  For example, used when the AP_MotorsTri class changed from having its own parameter table
-  plus a subgroup for AP_MotorsMulticopter to just inheriting the AP_MotorsMulticopter var_info
-
-  This does not handle nesting beyond the single level shift
-*/
-void AP_Param::convert_parent_class(uint8_t param_key, void *object_pointer,
-                                    const struct AP_Param::GroupInfo *group_info)
+// move all parameters from a class to a new location
+// is_top_level: Is true if the class had its own top level key, param_key. It is false if the class was a subgroup
+void AP_Param::convert_class(uint16_t param_key, void *object_pointer,
+                                    const struct AP_Param::GroupInfo *group_info,
+                                    uint16_t old_index, uint16_t old_top_element, bool is_top_level)
 {
+    const uint8_t group_shift = is_top_level ? 0 : 6;
+
     for (uint8_t i=0; group_info[i].type != AP_PARAM_NONE; i++) {
         struct ConversionInfo info;
         info.old_key = param_key;
         info.type = (ap_var_type)group_info[i].type;
         info.new_name = nullptr;
-        info.old_group_element = uint16_t(group_info[i].idx)<<6;
+        info.old_group_element = (uint16_t(group_info[i].idx)<<group_shift) + old_index;
+
         uint8_t old_value[type_size(info.type)];
         AP_Param *ap = (AP_Param *)&old_value[0];
         
@@ -1895,9 +1918,15 @@ void AP_Param::convert_parent_class(uint8_t param_key, void *object_pointer,
             continue;
         }
 
-        uint8_t *new_value = group_info[i].offset + (uint8_t *)object_pointer;
-        memcpy(new_value, old_value, sizeof(old_value));
+        AP_Param *ap2 = (AP_Param *)(group_info[i].offset + (uint8_t *)object_pointer);
+        memcpy(ap2, ap, sizeof(old_value));
+        // and save
+        ap2->save();
     }
+
+    // we need to flush here to prevent a later set_default_by_name()
+    // causing a save to be done on a converted parameter
+    flush();
 }
 
 /*
@@ -2099,11 +2128,13 @@ bool AP_Param::read_param_defaults_file(const char *filename, bool last_pass)
         AP_Param *vp = find(pname, &var_type);
         if (!vp) {
             if (last_pass) {
+#if ENABLE_DEBUG
                 ::printf("Ignored unknown param %s in defaults file %s\n",
                          pname, filename);
                 hal.console->printf(
                          "Ignored unknown param %s in defaults file %s\n",
                          pname, filename);
+#endif
             }
             continue;
         }
@@ -2295,11 +2326,13 @@ void AP_Param::load_embedded_param_defaults(bool last_pass)
         AP_Param *vp = find(pname, &var_type);
         if (!vp) {
             if (last_pass) {
+#if ENABLE_DEBUG
                 ::printf("Ignored unknown param %s from embedded region (offset=%u)\n",
                          pname, unsigned(ptr - param_defaults_data.data));
                 hal.console->printf(
                          "Ignored unknown param %s from embedded region (offset=%u)\n",
                          pname, unsigned(ptr - param_defaults_data.data));
+#endif
             }
             continue;
         }
@@ -2351,7 +2384,7 @@ void AP_Param::send_parameter(const char *name, enum ap_var_type var_type, uint8
     // of a set of the first element of a AP_Vector3f. This happens as the ap->save() call can't
     // distinguish between a vector and scalar save. It means that setting first element of a vector
     // via MAVLink results in sending all 3 elements to the GCS
-#ifndef HAL_NO_GCS
+#if HAL_GCS_ENABLED
     const Vector3f &v = ((AP_Vector3f *)this)->get();
     char name2[AP_MAX_NAME_SIZE+1];
     strncpy(name2, name, AP_MAX_NAME_SIZE);
@@ -2364,7 +2397,7 @@ void AP_Param::send_parameter(const char *name, enum ap_var_type var_type, uint8
     GCS_SEND_PARAM(name2, AP_PARAM_FLOAT, v.y);
     name_axis = 'Z';
     GCS_SEND_PARAM(name2, AP_PARAM_FLOAT, v.z);
-#endif // HAL_NO_GCS
+#endif // HAL_GCS_ENABLED
 }
 
 /*
@@ -2455,7 +2488,7 @@ void AP_Param::set_defaults_from_table(const struct defaults_table_struct *table
         if (!AP_Param::set_default_by_name(table[i].name, table[i].value)) {
             char *buf = nullptr;
             if (asprintf(&buf, "param deflt fail:%s", table[i].name) > 0) {
-                AP_BoardConfig::config_error(buf);
+                AP_BoardConfig::config_error("%s", buf);
             }
         }
     }
@@ -2554,6 +2587,36 @@ bool AP_Param::set_and_save_by_name(const char *name, float value)
     return false;
 }
 
+/*
+  set and save a value by name
+ */
+bool AP_Param::set_and_save_by_name_ifchanged(const char *name, float value)
+{
+    enum ap_var_type vtype;
+    AP_Param *vp = find(name, &vtype);
+    if (vp == nullptr) {
+        return false;
+    }
+    switch (vtype) {
+    case AP_PARAM_INT8:
+        ((AP_Int8 *)vp)->set_and_save_ifchanged(value);
+        return true;
+    case AP_PARAM_INT16:
+        ((AP_Int16 *)vp)->set_and_save_ifchanged(value);
+        return true;
+    case AP_PARAM_INT32:
+        ((AP_Int32 *)vp)->set_and_save_ifchanged(value);
+        return true;
+    case AP_PARAM_FLOAT:
+        ((AP_Float *)vp)->set_and_save_ifchanged(value);
+        return true;
+    default:
+        break;
+    }
+    // not a supported type
+    return false;
+}
+
 #if AP_PARAM_KEY_DUMP
 /*
   do not remove this show_all() code, it is essential for debugging
@@ -2566,16 +2629,16 @@ void AP_Param::show(const AP_Param *ap, const char *s,
 {
     switch (type) {
     case AP_PARAM_INT8:
-        port->printf("%s: %d\n", s, (int)((AP_Int8 *)ap)->get());
+        ::printf("%s: %d\n", s, (int)((AP_Int8 *)ap)->get());
         break;
     case AP_PARAM_INT16:
-        port->printf("%s: %d\n", s, (int)((AP_Int16 *)ap)->get());
+        ::printf("%s: %d\n", s, (int)((AP_Int16 *)ap)->get());
         break;
     case AP_PARAM_INT32:
-        port->printf("%s: %ld\n", s, (long)((AP_Int32 *)ap)->get());
+        ::printf("%s: %ld\n", s, (long)((AP_Int32 *)ap)->get());
         break;
     case AP_PARAM_FLOAT:
-        port->printf("%s: %f\n", s, (double)((AP_Float *)ap)->get());
+        ::printf("%s: %f\n", s, (double)((AP_Float *)ap)->get());
         break;
     default:
         break;
@@ -2603,7 +2666,7 @@ void AP_Param::show_all(AP_HAL::BetterStream *port, bool showKeyValues)
          ap;
          ap=AP_Param::next_scalar(&token, &type)) {
         if (showKeyValues) {
-            port->printf("Key %u: Index %u: GroupElement %u  :  ", (unsigned)token.key, (unsigned)token.idx, (unsigned)token.group_element);
+            ::printf("Key %u: Index %u: GroupElement %u  :  ", (unsigned)_var_info[token.key].key, (unsigned)token.idx, (unsigned)token.group_element);
         }
         show(ap, token, type, port);
         hal.scheduler->delay(1);

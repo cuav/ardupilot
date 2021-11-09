@@ -43,7 +43,8 @@
 
 #pragma once
 #define _CHIBIOS_HAL_CONF_
-#define _CHIBIOS_HAL_CONF_VER_7_0_
+#define _CHIBIOS_HAL_CONF_VER_7_1_
+
 #include "mcuconf.h"
 
 /**
@@ -79,6 +80,13 @@
  */
 #if !defined(HAL_USE_DAC) || defined(__DOXYGEN__)
 #define HAL_USE_DAC                         FALSE
+#endif
+
+/**
+ * @brief   Enables the EFlash subsystem.
+ */
+#if !defined(HAL_USE_EFL) || defined(__DOXYGEN__)
+#define HAL_USE_EFL                         FALSE
 #endif
 
 /**
@@ -450,7 +458,8 @@
  * @note    The default is 2 buffers.
  */
 #if !defined(SERIAL_USB_BUFFERS_NUMBER) || defined(__DOXYGEN__)
-#if defined(STM32H7)
+// more USB buffers works well on H7 and higher end F7
+#if defined(STM32H7) || (defined(STM32F7) && HAL_MEMORY_TOTAL_KB>=512)
 #define SERIAL_USB_BUFFERS_NUMBER   4
 #else
 #define SERIAL_USB_BUFFERS_NUMBER   2

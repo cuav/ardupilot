@@ -26,7 +26,7 @@
 
    APMrover alpha version tester: Franco Borasio, Daniel Chapelat...
 
-   Please contribute your ideas! See https://dev.ardupilot.org for details
+   Please contribute your ideas! See https://ardupilot.org/dev for details
 */
 
 #include "Rover.h"
@@ -56,7 +56,9 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
     SCHED_TASK_CLASS(AP_GPS,              &rover.gps,              update,         50,  300),
     SCHED_TASK_CLASS(AP_Baro,             &rover.barometer,        update,         10,  200),
     SCHED_TASK_CLASS(AP_Beacon,           &rover.g2.beacon,        update,         50,  200),
+#if HAL_PROXIMITY_ENABLED
     SCHED_TASK_CLASS(AP_Proximity,        &rover.g2.proximity,     update,         50,  200),
+#endif
     SCHED_TASK_CLASS(AP_WindVane,         &rover.g2.windvane,      update,         20,  100),
     SCHED_TASK_CLASS(AC_Fence,            &rover.g2.fence,         update,         10,  100),
     SCHED_TASK(update_wheel_encoder,   50,    200),
@@ -91,13 +93,14 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
 #endif
     SCHED_TASK_CLASS(Compass,          &rover.compass,              cal_update, 50, 200),
     SCHED_TASK(compass_save,           0.1,   200),
-    SCHED_TASK(accel_cal_update,       10,    200),
 #if LOGGING_ENABLED == ENABLED
     SCHED_TASK_CLASS(AP_Logger,     &rover.logger,        periodic_tasks, 50,  300),
 #endif
     SCHED_TASK_CLASS(AP_InertialSensor,   &rover.ins,              periodic,      400,  200),
     SCHED_TASK_CLASS(AP_Scheduler,        &rover.scheduler,        update_logging, 0.1, 200),
+#if HAL_BUTTON_ENABLED
     SCHED_TASK_CLASS(AP_Button,           &rover.button,           update,          5,  200),
+#endif
 #if STATS_ENABLED == ENABLED
     SCHED_TASK(stats_update,            1,    200),
 #endif
@@ -107,6 +110,9 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
     SCHED_TASK(afs_fs_check,           10,    200),
 #endif
     SCHED_TASK(read_airspeed,          10,    100),
+#if HAL_AIS_ENABLED
+    SCHED_TASK_CLASS(AP_AIS, &rover.g2.ais, update, 5, 100),
+#endif
 };
 
 
@@ -133,6 +139,7 @@ Rover::Rover(void) :
 {
 }
 
+#ifdef ENABLE_SCRIPTING
 // set target location (for use by scripting)
 bool Rover::set_target_location(const Location& target_loc)
 {
@@ -211,6 +218,7 @@ bool Rover::get_control_output(AP_Vehicle::ControlOutput control_output, float &
     }
     return false;
 }
+#endif // ENABLE_SCRIPTING
 
 #if STATS_ENABLED == ENABLED
 /*
@@ -228,11 +236,6 @@ void Rover::stats_update(void)
 void Rover::ahrs_update()
 {
     arming.update_soft_armed();
-
-#if HIL_MODE != HIL_MODE_DISABLED
-    // update hil before AHRS update
-    gcs().update();
-#endif
 
     // AHRS may use movement to calculate heading
     update_ahrs_flyforward();
@@ -252,7 +255,7 @@ void Rover::ahrs_update()
     // if using the EKF get a speed update now (from accelerometers)
     Vector3f velocity;
     if (ahrs.get_velocity_NED(velocity)) {
-        ground_speed = norm(velocity.x, velocity.y);
+        ground_speed = velocity.xy().length();
     } else if (gps.status() >= AP_GPS::GPS_OK_FIX_3D) {
         ground_speed = ahrs.groundspeed();
     }
@@ -263,7 +266,7 @@ void Rover::ahrs_update()
     }
 
     if (should_log(MASK_LOG_IMU)) {
-        logger.Write_IMU();
+        AP::ins().Write_IMU();
     }
 }
 
@@ -278,7 +281,17 @@ void Rover::gcs_failsafe_check(void)
     }
 
     // check for updates from GCS within 2 seconds
-    failsafe_trigger(FAILSAFE_EVENT_GCS, "GCS", failsafe.last_heartbeat_ms != 0 && (millis() - failsafe.last_heartbeat_ms) > 2000);
+    const uint32_t gcs_last_seen_ms = gcs().sysid_myggcs_last_seen_time_ms();
+    bool do_failsafe = true;
+    if (gcs_last_seen_ms == 0) {
+        // we've never seen the GCS, so we never failsafe for not seeing it
+        do_failsafe = false;
+    } else if (millis() - gcs_last_seen_ms <= 2000) {
+        // we've never seen the GCS in the last couple of seconds, so all good
+        do_failsafe = false;
+    }
+
+    failsafe_trigger(FAILSAFE_EVENT_GCS, "GCS", do_failsafe);
 }
 
 /*
@@ -300,9 +313,11 @@ void Rover::update_logging1(void)
         Log_Write_Nav_Tuning();
     }
 
+#if HAL_PROXIMITY_ENABLED
     if (should_log(MASK_LOG_RANGEFINDER)) {
         logger.Write_Proximity(g2.proximity);
     }
+#endif
 }
 
 /*
@@ -320,7 +335,7 @@ void Rover::update_logging2(void)
     }
 
     if (should_log(MASK_LOG_IMU)) {
-        logger.Write_Vibration();
+        AP::ins().Write_Vibration();
     }
 }
 
@@ -357,7 +372,7 @@ void Rover::one_second_loop(void)
     set_likely_flying(hal.util->get_soft_armed());
 
     // send latest param values to wp_nav
-    g2.wp_nav.set_turn_params(g.turn_max_g, g2.turn_radius, g2.motors.have_skid_steering());
+    g2.wp_nav.set_turn_params(g2.turn_radius, g2.motors.have_skid_steering());
 }
 
 void Rover::update_current_mode(void)

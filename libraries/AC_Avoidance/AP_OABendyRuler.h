@@ -19,15 +19,19 @@ public:
     // send configuration info stored in front end parameters
     void set_config(float margin_max) { _margin_max = MAX(margin_max, 0.0f); }
 
-    // run background task to find best path and update avoidance_results
-    // returns true and populates origin_new and destination_new if OA is required.  returns false if OA is not required
-    bool update(const Location& current_loc, const Location& destination, const Vector2f &ground_speed_vec, Location &origin_new, Location &destination_new, bool proximity_only);
-
     enum class OABendyType {
         OA_BENDY_DISABLED   = 0,
         OA_BENDY_HORIZONTAL = 1,
         OA_BENDY_VERTICAL   = 2,
     };
+
+    // run background task to find best path and update avoidance_results
+    // returns true and populates origin_new and destination_new if OA is required.  returns false if OA is not required
+    bool update(const Location& current_loc, const Location& destination, const Vector2f &ground_speed_vec, Location &origin_new, Location &destination_new, OABendyType &bendy_type, bool proximity_only);
+
+    static const struct AP_Param::GroupInfo var_info[];
+
+private:
 
     // return type of BendyRuler in use
     OABendyType get_type() const;
@@ -36,11 +40,7 @@ public:
     bool search_xy_path(const Location& current_loc, const Location& destination, float ground_course_deg, Location &destination_new, float lookahead_step_1_dist, float lookahead_step_2_dist, float bearing_to_dest, float distance_to_dest, bool proximity_only);
 
     // search for path in the Vertical directions
-    bool search_vertical_path(const Location& current_loc, const Location& destination,Location &destination_new, const float &lookahead_step1_dist, const float &lookahead_step2_dist, const float &bearing_to_dest, const float &distance_to_dest, bool proximity_only); 
-
-    static const struct AP_Param::GroupInfo var_info[];
-
-private:
+    bool search_vertical_path(const Location &current_loc, const Location &destination, Location &destination_new, float lookahead_step1_dist, float lookahead_step2_dist, float bearing_to_dest, float distance_to_dest, bool proximity_only);
 
     // calculate minimum distance between a path and any obstacle
     float calc_avoidance_margin(const Location &start, const Location &end, bool proximity_only) const;
@@ -67,6 +67,9 @@ private:
     // calculate minimum distance between a path and proximity sensor obstacles
     // on success returns true and updates margin
     bool calc_margin_from_object_database(const Location &start, const Location &end, float &margin) const;
+
+    // Logging function
+    void Write_OABendyRuler(const uint8_t type, const bool active, const float target_yaw, const float target_pitch, const bool resist_chg, const float margin, const Location &final_dest, const Location &oa_dest) const;
 
     // OA common parameters
     float _margin_max;              // object avoidance will ignore objects more than this many meters from vehicle

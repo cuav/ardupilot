@@ -116,7 +116,7 @@ class ChibiOS::CANIface : public AP_HAL::CANIface
     bool initialised_;
     bool had_activity_;
     AP_HAL::EventHandle* event_handle_;
-#if !defined(HAL_BUILD_AP_PERIPH) && !defined(HAL_BOOTLOADER_BUILD)
+#if CH_CFG_USE_EVENTS == TRUE
     static ChibiOS::EventSource evt_src_;
 #endif
     const uint8_t self_index_;
@@ -159,6 +159,7 @@ class ChibiOS::CANIface : public AP_HAL::CANIface
         uint32_t rx_errors;
         uint32_t num_busoff_err;
         uint32_t num_events;
+        uint32_t ecr;
     } stats;
 
 public:
@@ -166,6 +167,8 @@ public:
      *   Common CAN methods                   *
      * ****************************************/
     CANIface(uint8_t index);
+    CANIface();
+    static uint8_t next_interface;
 
     // Initialise CAN Peripheral
     bool init(const uint32_t bitrate, const OperatingMode mode) override;
@@ -213,10 +216,12 @@ public:
                 const AP_HAL::CANFrame* const pending_tx,
                 uint64_t blocking_deadline) override;
 
-#if !defined(HAL_BUILD_AP_PERIPH) && !defined(HAL_BOOTLOADER_BUILD)
+#if CH_CFG_USE_EVENTS == TRUE
     // setup event handle for waiting on events
     bool set_event_handle(AP_HAL::EventHandle* handle) override;
+#endif
 
+#if !defined(HAL_BOOTLOADER_BUILD)
     // fetch stats text and return the size of the same,
     // results available via @SYS/can0_stats.txt or @SYS/can1_stats.txt 
     void get_stats(ExpandingString &str) override;
@@ -232,14 +237,9 @@ public:
     // droping the frame, and counting errors
     void pollErrorFlagsFromISR(void);
 
-    // CAN Peripheral register structure
-    static constexpr CanType* const Can[HAL_NUM_CAN_IFACES] = {
-        reinterpret_cast<CanType*>(FDCAN1_BASE)
-#if HAL_NUM_CAN_IFACES > 1
-        ,
-        reinterpret_cast<CanType*>(FDCAN2_BASE)
-#endif
-    };
+    // CAN Peripheral register structure, pointing at base
+    // register. Indexed by locical interface number
+    static constexpr CanType* const Can[HAL_NUM_CAN_IFACES] = { HAL_CAN_BASE_LIST };
 };
 
 

@@ -23,12 +23,6 @@
     heavily based on RangeFinder NMEA library
 */
 
-// constructor
-AP_WindVane_NMEA::AP_WindVane_NMEA(AP_WindVane &frontend) :
-    AP_WindVane_Backend(frontend)
-{
-}
-
 // init - performs any required initialization for this instance
 void AP_WindVane_NMEA::init(const AP_SerialManager& serial_manager)
 {
@@ -64,10 +58,10 @@ void AP_WindVane_NMEA::update()
         if (decode(c)) {
             // user may not have NMEA selected for both speed and direction
             if (_frontend._direction_type.get() == _frontend.WindVaneType::WINDVANE_NMEA) {
-                direction_update_frontend(wrap_PI(radians(_wind_dir_deg + _frontend._dir_analog_bearing_offset.get()) + AP::ahrs().yaw));
+                _frontend._direction_apparent_raw = wrap_PI(radians(_wind_dir_deg + _frontend._dir_analog_bearing_offset.get()));
             }
             if (_frontend._speed_sensor_type.get() == _frontend.Speed_type::WINDSPEED_NMEA) {
-                speed_update_frontend(_speed_ms);
+                _frontend._speed_apparent_raw = _speed_ms;
             }
         }
     }

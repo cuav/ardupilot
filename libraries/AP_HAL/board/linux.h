@@ -7,6 +7,7 @@
 #define HAL_OS_SOCKETS 1
 #define HAL_STORAGE_SIZE            16384
 #define HAL_STORAGE_SIZE_AVAILABLE  HAL_STORAGE_SIZE
+#define HAL_DSHOT_ALARM 0
 
 // make sensor selection clearer
 #define PROBE_IMU_I2C(driver, bus, addr, args ...) ADD_BACKEND(AP_InertialSensor_ ## driver::probe(*this,GET_I2C_DEVICE(bus, addr),##args))
@@ -26,9 +27,9 @@
     #define HAL_BOARD_LOG_DIRECTORY "logs"
     #define HAL_BOARD_TERRAIN_DIRECTORY "terrain"
     #define HAL_BOARD_STORAGE_DIRECTORY "."
-    #define HAL_INS_DEFAULT HAL_INS_HIL
-    #define HAL_BARO_DEFAULT HAL_BARO_HIL
-    #define HAL_COMPASS_DEFAULT HAL_COMPASS_HIL
+    #define HAL_INS_DEFAULT HAL_INS_NONE
+    #define HAL_BARO_DEFAULT HAL_BARO_NONE
+    #define HAL_COMPASS_DEFAULT HAL_COMPASS_NONE
 #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PXF || CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_ERLEBOARD
     #if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PXF
       #define HAL_INS_PROBE_LIST PROBE_IMU_SPI(Invensense, "mpu9250", ROTATION_ROLL_180_YAW_270)
@@ -156,9 +157,9 @@
     #define HAL_GPIO_LED_OFF          1
 #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_ZYNQ
     // Stub the sensors out for now, at least we can build and run
-    #define HAL_INS_DEFAULT HAL_INS_HIL
-    #define HAL_BARO_DEFAULT HAL_BARO_HIL
-    #define HAL_COMPASS_DEFAULT HAL_COMPASS_HIL
+    #define HAL_INS_DEFAULT HAL_INS_NONE
+    #define HAL_BARO_DEFAULT HAL_BARO_NONE
+    #define HAL_COMPASS_DEFAULT HAL_COMPASS_NONE
     // only external compasses
     #define HAL_PROBE_EXTERNAL_I2C_COMPASSES
     #define HAL_COMPASS_DEFAULT HAL_COMPASS_NONE
@@ -186,17 +187,10 @@
     #define HAL_RANGEFINDER_LIGHTWARE_I2C_BUS 2
     #define HAL_NUM_CAN_IFACES 1
 #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_NAVIGATOR
-    #define HAL_INS_PROBE_LIST PROBE_IMU_SPI(LSM9DS1, "lsm9ds1_ag", ROTATION_PITCH_180)
-    #define HAL_MAG_PROBE_LIST PROBE_MAG_SPI(LSM9DS1, "lsm9ds1_m",  ROTATION_NONE)
-    #define HAL_BARO_PROBE_LIST PROBE_BARO_SPI(BMP280, "bmp280")
-    #define HAL_BATT_CURR_PIN    0
-    #define HAL_BATT_CURR_SCALE  1
-    #define HAL_BATT_VOLT_PIN    1
-    #define HAL_BATT_VOLT_SCALE  1
-    #define HAL_RGBLED_RED   24
-    #define HAL_RGBLED_GREEN 25
-    #define HAL_RGBLED_BLUE  26
-    #define HAL_RGBLED_NORMAL_POLARITY false
+    #define HAL_INS_PROBE_LIST PROBE_IMU_SPI(Invensense, "icm20602", ROTATION_ROLL_180_YAW_270)
+    #define HAL_MAG_PROBE_LIST PROBE_MAG_I2C(MMC5XX3, 1, 0x30, false, ROTATION_YAW_90)
+    #define HAL_BARO_PROBE_LIST PROBE_BARO_I2C(BMP280, 4, 0x76)
+    #define HAL_BARO_EXTERNAL_BUS_DEFAULT 6
 #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BLUE
     #define HAL_GPIO_A_LED_PIN 66
     #define HAL_GPIO_B_LED_PIN 67
@@ -295,6 +289,43 @@
 
     #define HAL_HAVE_GETTIME_SETTIME 1
 
+#elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_OBAL_V1
+    
+    //#define HAL_BARO_ALLOW_INIT_NO_BARO
+    
+    // Activate SUB Model Configuratopm
+    #define HAL_BOARD_SUBTYPE_LINUX_OBAL_V1_MPU_9250_SPI
+    
+    // Define Notify
+    #define OBAL_NOTIFY_LED
+    
+
+    // GY-91 SPI Connection
+    #ifdef HAL_BOARD_SUBTYPE_LINUX_OBAL_V1_MPU_9250_SPI
+        #define HAL_BOARD_LOG_DIRECTORY "/home/pi/ardupilot/logs"
+        #define HAL_BOARD_TERRAIN_DIRECTORY "/home/pi/ardupilot/terrain"
+        #define HAL_BOARD_STORAGE_DIRECTORY "/home/pi/ardupilot"
+        #define HAL_PARAM_DEFAULTS_PATH "/home/pi/ardupilot.parm"
+
+        #define HAL_INS_PROBE_LIST PROBE_IMU_SPI(Invensense, "mpu9250", ROTATION_NONE)
+        #define HAL_MAG_PROBE_LIST PROBE_MAG_IMU(AK8963, mpu9250, 0, ROTATION_NONE)
+        #define HAL_BARO_PROBE_LIST PROBE_BARO_I2C(BMP085, 1, 0x77) 
+        //#define HAL_MAG_PROBE_LIST PROBE_MAG_I2C(QMC5883L, 1, 0x0d,true ,  ROTATION_NONE)
+
+        #define HAL_PROBE_EXTERNAL_I2C_COMPASSES
+    #endif
+
+    
+    #ifdef OBAL_NOTIFY_LED
+        #define HAL_GPIO_A_LED_PIN        27 // You can choose between 27,22,4,12
+        #define HAL_GPIO_C_LED_PIN        22 // You can choose between 27,22,4,12
+        #define HAL_GPIO_B_LED_PIN        4 // You can choose between 27,22,4,12
+        #define HAL_GPIO_LED_ON           1
+        #define HAL_GPIO_LED_OFF          0
+    #endif
+    #define HAL_BUZZER_PIN                12 // You can choose between 27,22,4,12
+    #define OBAL_ALLOW_ADC                1
+
 #else
     #error "no Linux board subtype set"
 #endif
@@ -358,3 +389,11 @@
 #define HAL_Semaphore Linux::Semaphore
 #include <AP_HAL/EventHandle.h>
 #define HAL_EventHandle AP_HAL::EventHandle
+
+#ifndef HAL_HAVE_HARDWARE_DOUBLE
+#define HAL_HAVE_HARDWARE_DOUBLE 1
+#endif
+
+#ifndef HAL_WITH_EKF_DOUBLE
+#define HAL_WITH_EKF_DOUBLE HAL_HAVE_HARDWARE_DOUBLE
+#endif

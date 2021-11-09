@@ -53,12 +53,15 @@ public:
     enum Driver_Type : uint8_t {
         Driver_Type_None = 0,
         Driver_Type_UAVCAN = 1,
-        Driver_Type_KDECAN = 2,
+        // 2 was KDECAN -- do not re-use
         Driver_Type_ToshibaCAN = 3,
         Driver_Type_PiccoloCAN = 4,
         Driver_Type_CANTester = 5,
         Driver_Type_EFI_NWPMU = 6,
         Driver_Type_USD1 = 7,
+        Driver_Type_KDECAN = 8,
+        Driver_Type_MPPT_PacketDigital = 9,
+        Driver_Type_Scripting = 10,
     };
 
     void init(void);
@@ -88,7 +91,7 @@ public:
     }
     
     // Method to log status and debug information for review while debugging
-    void log_text(AP_CANManager::LogLevel loglevel, const char *tag, const char *fmt, ...);
+    void log_text(AP_CANManager::LogLevel loglevel, const char *tag, const char *fmt, ...) FMT_PRINTF(4,5);
 
     void log_retrieve(ExpandingString &str) const;
 

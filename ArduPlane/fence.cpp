@@ -60,18 +60,14 @@ void Plane::fence_check()
         case AC_FENCE_ACTION_GUIDED:
         case AC_FENCE_ACTION_GUIDED_THROTTLE_PASS:
         case AC_FENCE_ACTION_RTL_AND_LAND:
-            // make sure we don't auto trim the surfaces on this mode change
-            int8_t saved_auto_trim = g.auto_trim;
-            g.auto_trim.set(0);
             if (fence_act == AC_FENCE_ACTION_RTL_AND_LAND) {
                 set_mode(mode_rtl, ModeReason::FENCE_BREACHED);
             } else {
                 set_mode(mode_guided, ModeReason::FENCE_BREACHED);
             }
-            g.auto_trim.set(saved_auto_trim);
 
             if (fence.get_return_rally() != 0 || fence_act == AC_FENCE_ACTION_RTL_AND_LAND) {
-                guided_WP_loc = rally.calc_best_rally_or_home_location(current_loc, get_RTL_altitude());
+                guided_WP_loc = rally.calc_best_rally_or_home_location(current_loc, get_RTL_altitude_cm());
             } else {
                 //return to fence return point, not a rally point
                 guided_WP_loc = {};
@@ -92,9 +88,11 @@ void Plane::fence_check()
                     guided_WP_loc.lat = return_point[0];
                     guided_WP_loc.lng = return_point[1];
                 } else {
-                    // should. not. happen.
-                    guided_WP_loc.lat = current_loc.lat;
-                    guided_WP_loc.lng = current_loc.lng;
+                    // When no fence return point is found (ie. no inclusion fence uploaded, but exclusion is)
+                    // we fail to obtain a valid fence return point. In this case, home is considered a safe
+                    // return point.
+                    guided_WP_loc.lat = home.lat;
+                    guided_WP_loc.lng = home.lng;
                 }
             }
 

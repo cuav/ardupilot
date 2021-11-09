@@ -12,6 +12,8 @@ except Exception:
 # Emit docs in a RST format
 class RSTEmit(Emit):
     def blurb(self):
+        if self.sitl:
+            return """SITL parameters"""
         return """This is a complete list of the parameters which can be set (e.g. via the MAVLink protocol) to control vehicle behaviour. They are stored in persistent storage on the vehicle.
 
 This list is automatically generated from the latest ardupilot source code, and so may contain parameters which are not yet in the stable released versions of the code.
@@ -20,12 +22,19 @@ This list is automatically generated from the latest ardupilot source code, and 
     def toolname(self):
         return "Tools/autotest/param_metadata/param_parse.py"
 
-    def __init__(self):
-        Emit.__init__(self)
-        output_fname = 'Parameters.rst'
-        self.f = open(output_fname, mode='w')
+    def output_fname(self):
+        return 'Parameters.rst'
+
+    def __init__(self, *args, **kwargs):
+        Emit.__init__(self, *args, **kwargs)
+        self.f = open(self.output_fname(), mode='w')
         self.spacer = re.compile("^", re.MULTILINE)
         self.rstescape = re.compile("([^a-zA-Z0-9\n 	])")
+        if self.sitl:
+            parameterlisttype = "SITL Parameter List"
+        else:
+            parameterlisttype = "Complete Parameter List"
+        parameterlisttype += "\n" + "=" * len(parameterlisttype)
         self.preamble = """.. Dynamically generated list of documented parameters
 .. This page was generated using {toolname}
 
@@ -34,17 +43,17 @@ This list is automatically generated from the latest ardupilot source code, and 
 
 .. _parameters:
 
-Complete Parameter List
-=======================
+{parameterlisttype}
 
 {blurb}
 
 """.format(blurb=self.escape(self.blurb()),
+           parameterlisttype=parameterlisttype,
            toolname=self.escape(self.toolname()))
         self.t = ''
 
     def escape(self, s):
-        ret = re.sub(self.rstescape, "\\\\\g<1>", s)
+        ret = re.sub(self.rstescape, r"\\\g<1>", s)
         return ret
 
     def close(self):
@@ -182,9 +191,13 @@ Complete Parameter List
             rows.append(v)
         return self.tablify(rows, headings=render_info["headings"])
 
+    def render_table_headings(self, ret, row, headings, field_table_info, field, param):
+        row.append(self.render_prog_values_field(field_table_info[field], param, field))
+        return ''
+
     def emit(self, g):
-        tag = '%s Parameters' % self.escape(g.name)
-        reference = "parameters_" + g.name
+        tag = '%s Parameters' % self.escape(g.reference)
+        reference = "parameters_" + g.reference
 
         field_table_info = {
             "Values": {
@@ -212,10 +225,7 @@ Complete Parameter List
             # Get param path if defined (i.e. is duplicate parameter)
             param_path = getattr(param, 'path', '')
 
-            if self.annotate_with_vehicle:
-                name = param.name
-            else:
-                name = param.name.split(':')[-1]
+            name = param.name.split(':')[-1]
 
             tag_param_path = ' (%s)' % param_path if param_path else ''
             tag = '%s%s: %s' % (self.escape(name), self.escape(tag_param_path), self.escape(param.DisplayName),)
@@ -223,10 +233,7 @@ Complete Parameter List
             tag = tag.strip()
             reference = param.name
             # remove e.g. "ArduPlane:" from start of parameter name:
-            if self.annotate_with_vehicle:
-                reference = g.name + "_" + reference.split(":")[-1]
-            else:
-                reference = reference.split(":")[-1]
+            reference = reference.split(":")[-1]
             if param_path:
                 reference += '__' + param_path
 
@@ -240,25 +247,30 @@ Complete Parameter List
 
             if d.get('User', None) == 'Advanced':
                 ret += '\n| *Note: This parameter is for advanced users*'
+            if d.get('RebootRequired', None) == 'True':
+                ret += '\n| *Note: Reboot required after change*'
+            elif 'RebootRequired' in d and d.get('RebootRequired') != 'True':
+                raise Exception("Bad RebootRequired metadata tag value for {} in {}".format(d.get('name'),d.get('real_path')))
             ret += "\n\n%s\n" % self.escape(param.Description)
 
             headings = []
             row = []
             for field in sorted(param.__dict__.keys()):
-                if field not in ['name', 'DisplayName', 'Description', 'User'] and field in known_param_fields:
+                if (field not in ['name', 'DisplayName', 'Description', 'User', 'RebootRequired'] and
+                        field in known_param_fields):
                     headings.append(field)
                     if field in field_table_info and Emit.prog_values_field.match(param.__dict__[field]):
-                        row.append(self.render_prog_values_field(field_table_info[field], param, field))
+                        ret += self.render_table_headings(ret, row, headings, field_table_info, field, param)
                     elif field == "Range":
                         (param_min, param_max) = (param.__dict__[field]).split(' ')
                         row.append("%s - %s" % (param_min, param_max,))
                     elif field == 'Units':
-                        abreviated_units = param.__dict__[field]
-                        if abreviated_units != '':
+                        abbreviated_units = param.__dict__[field]
+                        if abbreviated_units != '':
                             # use the known_units dictionary to
-                            # convert the abreviated unit into a full
+                            # convert the abbreviated unit into a full
                             # textual one:
-                            units = known_units[abreviated_units]
+                            units = known_units[abbreviated_units]
                             row.append(cescape(units))
                     else:
                         row.append(cescape(param.__dict__[field]))

@@ -126,32 +126,37 @@ void AP_Logger_File::periodic_1Hz()
 
     if (_initialised &&
         _write_fd == -1 && _read_fd == -1 &&
+        erase.log_num == 0 &&
+        erase.was_logging) {
+        // restart logging after an erase if needed
+        erase.was_logging = false;
+        // setup to open the log in the backend thread
+        start_new_log_pending = true;
+    }
+    
+    if (_initialised &&
+        !start_new_log_pending &&
+        _write_fd == -1 && _read_fd == -1 &&
         logging_enabled() &&
-        !recent_open_error() &&
-        !hal.util->get_soft_armed()) {
-        // retry logging open. This allows for booting with
-        // LOG_DISARMED=1 with a bad microSD or no microSD. Once a
-        // card is inserted then logging starts
-        start_new_log();
+        !recent_open_error()) {
+        // setup to open the log in the backend thread
+        start_new_log_pending = true;
     }
 
     if (!io_thread_alive()) {
         if (io_thread_warning_decimation_counter == 0 && _initialised) {
             // we don't print this error unless we did initialise. When _initialised is set to true
             // we register the IO timer callback
-            gcs().send_text(MAV_SEVERITY_CRITICAL, "AP_Logger: stuck thread (%s)", last_io_operation);
+            GCS_SEND_TEXT(MAV_SEVERITY_CRITICAL, "AP_Logger: stuck thread (%s)", last_io_operation);
         }
-        if (io_thread_warning_decimation_counter++ > 57) {
+        if (io_thread_warning_decimation_counter++ > 30) {
             io_thread_warning_decimation_counter = 0;
         }
-        // If you try to close the file here then it will almost
-        // certainly block.  Since this is the main thread, this is
-        // likely to cause a crash.
+    }
 
-        // semaphore_write_fd not taken here as if the io thread is
-        // dead it may not release lock...
-        _write_fd = -1;
-        _initialised = false;
+    if (rate_limiter == nullptr && _front._params.file_ratemax > 0) {
+        // setup rate limiting
+        rate_limiter = new AP_Logger_RateLimiter(_front, _front._params.file_ratemax);
     }
 }
 
@@ -403,29 +408,10 @@ void AP_Logger_File::EraseAll()
         return;
     }
 
-    const bool was_logging = (_write_fd != -1);
+    erase.was_logging = (_write_fd != -1);
     stop_logging();
 
-    for (uint16_t log_num=1; log_num<=MAX_LOG_FILES; log_num++) {
-        char *fname = _log_file_name(log_num);
-        if (fname == nullptr) {
-            break;
-        }
-        EXPECT_DELAY_MS(3000);
-        AP::FS().unlink(fname);
-        free(fname);
-    }
-    char *fname = _lastlog_file_name();
-    if (fname != nullptr) {
-        AP::FS().unlink(fname);
-        free(fname);
-    }
-
-    _cached_oldest_log = 0;
-
-    if (was_logging) {
-        start_new_log();
-    }
+    erase.log_num = 1;
 }
 
 bool AP_Logger_File::WritesOK() const
@@ -445,6 +431,11 @@ bool AP_Logger_File::StartNewLogOK() const
     if (recent_open_error()) {
         return false;
     }
+#if !APM_BUILD_TYPE(APM_BUILD_Replay)
+    if (hal.scheduler->in_main_thread()) {
+        return false;
+    }
+#endif
     return AP_Logger_Backend::StartNewLogOK();
 }
 
@@ -513,6 +504,7 @@ uint16_t AP_Logger_File::find_last_log()
     }
     EXPECT_DELAY_MS(3000);
     FileData *fd = AP::FS().load_file(fname);
+    free(fname);
     if (fd != nullptr) {
         ret = strtol((const char *)fd->data, NULL, 10);
         delete fd;
@@ -714,6 +706,36 @@ void AP_Logger_File::stop_logging(void)
 }
 
 /*
+  does start_new_log in the logger thread
+ */
+void AP_Logger_File::PrepForArming_start_logging()
+{
+    if (logging_started()) {
+        return;
+    }
+
+    uint32_t start_ms = AP_HAL::millis();
+    const uint32_t open_limit_ms = 1000;
+
+    /*
+      log open happens in the io_timer thread. We allow for a maximum
+      of 1s to complete the open
+     */
+    start_new_log_pending = true;
+    EXPECT_DELAY_MS(1000);
+    while (AP_HAL::millis() - start_ms < open_limit_ms) {
+        if (logging_started()) {
+            break;
+        }
+#if !APM_BUILD_TYPE(APM_BUILD_Replay) && !defined(HAL_BUILD_AP_PERIPH)
+        // keep the EKF ticking over
+        AP::ahrs().update();
+#endif
+        hal.scheduler->delay(1);
+    }
+}
+
+/*
   start writing to a new log file
  */
 void AP_Logger_File::start_new_log(void)
@@ -721,6 +743,13 @@ void AP_Logger_File::start_new_log(void)
     if (recent_open_error()) {
         // we have previously failed to open a file - don't try again
         // to prevent us trying to open files while in flight
+        return;
+    }
+
+    if (erase.log_num != 0) {
+        // don't start a new log while erasing, but record that we
+        // want to start logging when erase finished
+        erase.was_logging = true;
         return;
     }
 
@@ -858,6 +887,18 @@ void AP_Logger_File::io_timer(void)
 {
     uint32_t tnow = AP_HAL::millis();
     _io_timer_heartbeat = tnow;
+
+    if (start_new_log_pending) {
+        start_new_log();
+        start_new_log_pending = false;
+    }
+
+    if (erase.log_num != 0) {
+        // continue erase
+        erase_next();
+        return;
+    }
+
     if (_write_fd == -1 || !_initialised || recent_open_error()) {
         return;
     }
@@ -960,9 +1001,26 @@ void AP_Logger_File::io_timer(void)
 
 bool AP_Logger_File::io_thread_alive() const
 {
-    // if the io thread hasn't had a heartbeat in a full seconds then it is dead
-    // this is enough time for a sdcard remount
-    return (AP_HAL::millis() - _io_timer_heartbeat) < 3000U || !hal.scheduler->is_system_initialized();
+    if (!hal.scheduler->is_system_initialized()) {
+        // the system has long pauses during initialisation, assume still OK
+        return true;
+    }
+    // if the io thread hasn't had a heartbeat in a while then it is
+#if CONFIG_HAL_BOARD == HAL_BOARD_ESP32
+    uint32_t timeout_ms = 10000;
+#else
+    uint32_t timeout_ms = 5000;
+#endif
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL && !defined(HAL_BUILD_AP_PERIPH)
+    // the IO thread is working with hardware - writing to a physical
+    // disk.  Unfortunately these hardware devices do not obey our
+    // SITL speedup options, so we allow for it here.
+    SITL::SIM *sitl = AP::sitl();
+    if (sitl != nullptr) {
+        timeout_ms *= sitl->speedup;
+    }
+#endif
+    return (AP_HAL::millis() - _io_timer_heartbeat) < timeout_ms;
 }
 
 bool AP_Logger_File::logging_failed() const
@@ -983,6 +1041,36 @@ bool AP_Logger_File::logging_failed() const
     }
 
     return false;
+}
+
+/*
+  erase another file in async erase operation
+ */
+void AP_Logger_File::erase_next(void)
+{
+    char *fname = _log_file_name(erase.log_num);
+    if (fname == nullptr) {
+        erase.log_num = 0;
+        return;
+    }
+
+    AP::FS().unlink(fname);
+    free(fname);
+
+    erase.log_num++;
+    if (erase.log_num <= MAX_LOG_FILES) {
+        return;
+    }
+    
+    fname = _lastlog_file_name();
+    if (fname != nullptr) {
+        AP::FS().unlink(fname);
+        free(fname);
+    }
+
+    _cached_oldest_log = 0;
+
+    erase.log_num = 0;
 }
 
 #endif // HAL_LOGGING_FILESYSTEM_ENABLED

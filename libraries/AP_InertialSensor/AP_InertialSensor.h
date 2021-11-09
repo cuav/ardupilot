@@ -96,13 +96,13 @@ public:
 
     /// Register a new gyro/accel driver, allocating an instance
     /// number
-    uint8_t register_gyro(uint16_t raw_sample_rate_hz, uint32_t id);
-    uint8_t register_accel(uint16_t raw_sample_rate_hz, uint32_t id);
+    bool register_gyro(uint8_t &instance, uint16_t raw_sample_rate_hz, uint32_t id);
+    bool register_accel(uint8_t &instance, uint16_t raw_sample_rate_hz, uint32_t id);
 
     // a function called by the main thread at the main loop rate:
     void periodic();
 
-    bool calibrate_trim(float &trim_roll, float &trim_pitch);
+    bool calibrate_trim(Vector3f &trim_rad);
 
     /// calibrating - returns true if the gyros or accels are currently being calibrated
     bool calibrating() const;
@@ -132,18 +132,16 @@ public:
     const Vector3f &get_gyro_offsets(void) const { return get_gyro_offsets(_primary_gyro); }
 
     //get delta angle if available
-    bool get_delta_angle(uint8_t i, Vector3f &delta_angle) const;
-    bool get_delta_angle(Vector3f &delta_angle) const { return get_delta_angle(_primary_gyro, delta_angle); }
-
-    float get_delta_angle_dt(uint8_t i) const;
-    float get_delta_angle_dt() const { return get_delta_angle_dt(_primary_gyro); }
+    bool get_delta_angle(uint8_t i, Vector3f &delta_angle, float &delta_angle_dt) const;
+    bool get_delta_angle(Vector3f &delta_angle, float &delta_angle_dt) const {
+        return get_delta_angle(_primary_gyro, delta_angle, delta_angle_dt);
+    }
 
     //get delta velocity if available
-    bool get_delta_velocity(uint8_t i, Vector3f &delta_velocity) const;
-    bool get_delta_velocity(Vector3f &delta_velocity) const { return get_delta_velocity(_primary_accel, delta_velocity); }
-
-    float get_delta_velocity_dt(uint8_t i) const;
-    float get_delta_velocity_dt() const { return get_delta_velocity_dt(_primary_accel); }
+    bool get_delta_velocity(uint8_t i, Vector3f &delta_velocity, float &delta_velocity_dt) const;
+    bool get_delta_velocity(Vector3f &delta_velocity, float &delta_velocity_dt) const {
+        return get_delta_velocity(_primary_accel, delta_velocity, delta_velocity_dt);
+    }
 
     /// Fetch the current accelerometer values
     ///
@@ -245,9 +243,6 @@ public:
     // Update the harmonic notch frequencies
     void update_harmonic_notch_frequencies_hz(uint8_t num_freqs, const float scaled_freq[]);
 
-    // enable HIL mode
-    void set_hil_mode(void) { _hil_mode = true; }
-
     // get the gyro filter rate in Hz
     uint16_t get_gyro_filter_hz(void) const { return _gyro_filter_cutoff; }
 
@@ -283,6 +278,10 @@ public:
     // indicate which bit in LOG_BITMASK indicates raw logging enabled
     void set_log_raw_bit(uint32_t log_raw_bit) { _log_raw_bit = log_raw_bit; }
 
+    // Logging Functions
+    void Write_IMU() const;
+    void Write_Vibration() const;
+
     // calculate vibration levels and check for accelerometer clipping (called by a backends)
     void calc_vibration_and_clipping(uint8_t instance, const Vector3f &accel, float dt);
 
@@ -298,17 +297,6 @@ public:
 
     // return true if harmonic notch enabled
     bool gyro_harmonic_notch_enabled(void) const { return _harmonic_notch_filter.enabled(); }
-
-    /*
-      HIL set functions. The minimum for HIL is set_accel() and
-      set_gyro(). The others are option for higher fidelity log
-      playback
-     */
-    void set_accel(uint8_t instance, const Vector3f &accel);
-    void set_gyro(uint8_t instance, const Vector3f &gyro);
-    void set_delta_time(float delta_time);
-    void set_delta_velocity(uint8_t instance, float deltavt, const Vector3f &deltav);
-    void set_delta_angle(uint8_t instance, const Vector3f &deltaa, float deltaat);
 
     AuxiliaryBus *get_auxiliary_bus(int16_t backend_id) { return get_auxiliary_bus(backend_id, 0); }
     AuxiliaryBus *get_auxiliary_bus(int16_t backend_id, uint8_t instance);
@@ -329,7 +317,7 @@ public:
     bool get_primary_accel_cal_sample_avg(uint8_t sample_num, Vector3f& ret) const;
 
     // Returns newly calculated trim values if calculated
-    bool get_new_trim(float& trim_roll, float &trim_pitch);
+    bool get_new_trim(Vector3f &trim_rad);
 
     // initialise and register accel calibrator
     // called during the startup of accel cal
@@ -339,7 +327,9 @@ public:
     void acal_update();
 
     // simple accel calibration
+#if HAL_GCS_ENABLED
     MAV_RESULT simple_accel_cal();
+#endif
 
     bool accel_cal_requires_reboot() const { return _accel_cal_requires_reboot; }
 
@@ -405,6 +395,10 @@ public:
         bool should_log(uint8_t instance, IMU_SENSOR_TYPE type);
         void push_data_to_log();
 
+        // Logging functions
+        bool Write_ISBH(const float sample_rate_hz) const;
+        bool Write_ISBD() const;
+
         uint64_t measurement_started_us;
 
         bool initialised : 1;
@@ -457,11 +451,14 @@ private:
     // blog post describing the method: http://chionophilous.wordpress.com/2011/10/24/accelerometer-calibration-iv-1-implementing-gauss-newton-on-an-atmega/
     // original sketch available at http://rolfeschmidt.com/mathtools/skimetrics/adxl_gn_calibration.pde
 
-    bool _calculate_trim(const Vector3f &accel_sample, float& trim_roll, float& trim_pitch);
+    bool _calculate_trim(const Vector3f &accel_sample, Vector3f &trim_rad);
 
     // save gyro calibration values to eeprom
     void _save_gyro_calibration();
 
+    // Logging function
+    void Write_IMU_instance(const uint64_t time_us, const uint8_t imu_instance) const;
+    
     // backend objects
     AP_InertialSensor_Backend *_backends[INS_MAX_BACKENDS];
 
@@ -613,9 +610,6 @@ private:
     // has wait_for_sample() found a sample?
     bool _have_sample:1;
 
-    // are we in HIL mode?
-    bool _hil_mode:1;
-
     bool _backends_detected:1;
 
     // are gyros or accels currently being calibrated
@@ -658,13 +652,6 @@ private:
     // threshold for detecting stillness
     AP_Float _still_threshold;
 
-    /*
-      state for HIL support
-     */
-    struct {
-        float delta_time;
-    } _hil {};
-
     // Trim options
     AP_Int8 _acc_body_aligned;
     AP_Int8 _trim_option;
@@ -681,8 +668,7 @@ private:
     // Returns AccelCalibrator objects pointer for specified acceleromter
     AccelCalibrator* _acal_get_calibrator(uint8_t i) override { return i<get_accel_count()?&(_accel_calibrator[i]):nullptr; }
 
-    float _trim_pitch;
-    float _trim_roll;
+    Vector3f _trim_rad;
     bool _new_trim;
 
     bool _accel_cal_requires_reboot;

@@ -12,11 +12,10 @@ public:
 protected:
 
     void init_aux_function(aux_func_t ch_option, AuxSwitchPos) override;
-    void do_aux_function(aux_func_t ch_option, AuxSwitchPos) override;
+    bool do_aux_function(aux_func_t ch_option, AuxSwitchPos) override;
 
 private:
 
-    void do_aux_function_armdisarm(const AuxSwitchPos ch_flag) override;
     void do_aux_function_change_mode(const Mode::Number mode,
                                      const AuxSwitchPos ch_flag);
     void do_aux_function_change_air_mode(const AuxSwitchPos ch_flag);
@@ -41,6 +40,9 @@ public:
         }
         return &obj_channels[chan];
     }
+
+    // returns true if throttle arming checks should be run
+    bool arming_check_throttle() const override;
 
 protected:
 

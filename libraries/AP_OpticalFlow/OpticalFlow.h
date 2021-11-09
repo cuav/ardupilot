@@ -30,7 +30,7 @@
 #endif
 
 class OpticalFlow_backend;
-class AP_AHRS_NavEKF;
+class AP_AHRS;
 
 class OpticalFlow
 {
@@ -57,6 +57,7 @@ public:
         MAVLINK = 5,
         UAVCAN = 6,
         MSP = 7,
+        UPFLOW = 8,
         SITL = 10,
     };
 

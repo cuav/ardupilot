@@ -59,6 +59,10 @@ class AutoTestSub(AutoTest):
     def log_name(self):
         return "ArduSub"
 
+    def default_speedup(self):
+        '''Sub seems to be race-free'''
+        return 100
+
     def test_filepath(self):
         return os.path.realpath(__file__)
 
@@ -263,30 +267,19 @@ class AutoTestSub(AutoTest):
         self.progress("Mission OK")
 
     def test_gripper_mission(self):
-        with self.Context(self):
-            self.test_gripper_body()
-
-    def test_gripper_body(self):
-        ex = None
         try:
-            try:
-                self.get_parameter("GRIP_ENABLE", timeout=5)
-            except NotAchievedException:
-                self.progress("Skipping; Gripper not enabled in config?")
-                return
+            self.get_parameter("GRIP_ENABLE", timeout=5)
+        except NotAchievedException:
+            self.progress("Skipping; Gripper not enabled in config?")
+            return
 
-            self.load_mission("sub-gripper-mission.txt")
-            self.change_mode('LOITER')
-            self.wait_ready_to_arm()
-            self.arm_vehicle()
-            self.change_mode('AUTO')
-            self.wait_statustext("Gripper Grabbed", timeout=60)
-            self.wait_statustext("Gripper Released", timeout=60)
-        except Exception as e:
-            self.print_exception_caught(e)
-            ex = e
-        if ex is not None:
-            raise ex
+        self.load_mission("sub-gripper-mission.txt")
+        self.change_mode('LOITER')
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.change_mode('AUTO')
+        self.wait_statustext("Gripper Grabbed", timeout=60)
+        self.wait_statustext("Gripper Released", timeout=60)
 
     def dive_set_position_target(self):
         self.change_mode('GUIDED')
@@ -374,10 +367,18 @@ class AutoTestSub(AutoTest):
                 break
         self.initialise_after_reboot_sitl()
 
-    def apply_defaultfile_parameters(self):
-        super(AutoTestSub, self).apply_defaultfile_parameters()
-        # FIXME:
-        self.set_parameter("FS_GCS_ENABLE", 0)
+    def DoubleCircle(self):
+        self.change_mode('CIRCLE')
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.change_mode('STABILIZE')
+        self.change_mode('CIRCLE')
+        self.disarm_vehicle()
+
+    def default_parameter_list(self):
+        ret = super(AutoTestSub, self).default_parameter_list()
+        ret["FS_GCS_ENABLE"] = 0  # FIXME
+        return ret
 
     def disabled_tests(self):
         ret = super(AutoTestSub, self).disabled_tests()
@@ -403,6 +404,10 @@ class AutoTestSub(AutoTest):
             ("GripperMission",
              "Test gripper mission items",
              self.test_gripper_mission),
+
+            ("DoubleCircle",
+             "Test entering circle twice",
+             self.DoubleCircle),
 
             ("MotorThrustHoverParameterIgnore", "Test if we are ignoring MOT_THST_HOVER", self.test_mot_thst_hover_ignore),
 

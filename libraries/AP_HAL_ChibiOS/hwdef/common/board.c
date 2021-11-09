@@ -171,11 +171,16 @@ static void stm32_gpio_init(void) {
   /* Enabling GPIO-related clocks, the mask comes from the
      registry header file.*/
 #if defined(STM32H7)
+#if !EXTERNAL_PROG_FLASH_MB // if we have external flash resetting GPIO might disable all comms with it
   rccResetAHB4(STM32_GPIO_EN_MASK);
+#endif
   rccEnableAHB4(STM32_GPIO_EN_MASK, true);
 #elif defined(STM32F3)
   rccResetAHB(STM32_GPIO_EN_MASK);
   rccEnableAHB(STM32_GPIO_EN_MASK, true);
+#elif defined(STM32G4) || defined(STM32L4)
+  rccResetAHB2(STM32_GPIO_EN_MASK);
+  rccEnableAHB2(STM32_GPIO_EN_MASK, true);
 #else
   rccResetAHB1(STM32_GPIO_EN_MASK);
   rccEnableAHB1(STM32_GPIO_EN_MASK, true);
@@ -232,11 +237,30 @@ void __early_init(void) {
 #if defined(HAL_DISABLE_DCACHE)
   SCB_DisableDCache();
 #endif
+#if defined(STM32H7)
+  // disable cache on SRAM4 so we can use it for DMA
+  mpuConfigureRegion(MPU_REGION_5,
+                     0x38000000U,
+                     MPU_RASR_ATTR_AP_RW_RW |
+                     MPU_RASR_ATTR_NON_CACHEABLE |
+                     MPU_RASR_SIZE_64K |
+                     MPU_RASR_ENABLE);
+#endif
 }
 
 void __late_init(void) {
   halInit();
   chSysInit();
+
+  /*
+   * Initialize RNG
+   */
+#if HAL_USE_HW_RNG && defined(RNG)
+  rccEnableAHB2(RCC_AHB2ENR_RNGEN, 0);
+  RNG->CR |= RNG_CR_IE;
+  RNG->CR |= RNG_CR_RNGEN;
+#endif
+
   stm32_watchdog_save_reason();
 #ifndef HAL_BOOTLOADER_BUILD
   stm32_watchdog_clear_reason();

@@ -12,6 +12,7 @@ APJ_BOARD_ID 1025
 OSCILLATOR_HZ 8000000
 
 FLASH_SIZE_KB 2048
+env OPTIMIZE -O2
 
 # bootloader takes first sector
 FLASH_RESERVE_START_KB 128
@@ -66,7 +67,7 @@ PC2 BATT_CURRENT_SENS ADC1 SCALE(1)
 define HAL_BATT_VOLT_PIN 13
 define HAL_BATT_CURR_PIN 12
 define HAL_BATT_VOLT_SCALE 10.9
-define HAL_BATT_CURR_SCALE 28.5
+define HAL_BATT_CURR_SCALE 100
 define HAL_BATT_MONITOR_DEFAULT 4
 
 PC5 RSSI_ADC ADC1
@@ -107,7 +108,10 @@ DMA_NOSHARE SPI1* SPI3* TIM1* TIM3* TIM4_UP USART1_TX
 define HAL_STORAGE_SIZE 16384
 # use last 2 pages for flash storage
 # H743 has 16 pages of 128k each
-define STORAGE_FLASH_PAGE 14
+STORAGE_FLASH_PAGE 14
+
+# reserve space for flash storage in last 2 sectors
+FLASH_RESERVE_END_KB 256
 
 # enable logging to dataflash
 define HAL_LOGGING_DATAFLASH
@@ -135,5 +139,4 @@ define OSD_ENABLED 1
 define HAL_OSD_TYPE_DEFAULT 1
 ROMFS_WILDCARD libraries/AP_OSD/fonts/font*.bin
 
-define BOARD_PWM_COUNT_DEFAULT 5
 define STM32_PWM_USE_ADVANCED TRUE

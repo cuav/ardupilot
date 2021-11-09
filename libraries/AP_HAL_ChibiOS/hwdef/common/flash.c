@@ -103,7 +103,11 @@ static const uint32_t flash_memmap[STM32_FLASH_NPAGES] = { KB(16), KB(16), KB(16
 #endif
 
 #elif defined(STM32F7)
-#if BOARD_FLASH_SIZE == 1024
+#if BOARD_FLASH_SIZE == 512
+#define STM32_FLASH_NPAGES  8
+static const uint32_t flash_memmap[STM32_FLASH_NPAGES] = { KB(16), KB(16), KB(16), KB(16), KB(64), KB(128), KB(128), KB(128) };
+
+#elif BOARD_FLASH_SIZE == 1024
 #define STM32_FLASH_NPAGES  8
 static const uint32_t flash_memmap[STM32_FLASH_NPAGES] = { KB(32), KB(32), KB(32), KB(32), KB(128), KB(256), KB(256), KB(256) };
 
@@ -126,6 +130,12 @@ static const uint32_t flash_memmap[STM32_FLASH_NPAGES] = { KB(32), KB(32), KB(32
 #elif defined(STM32F303_MCUCONF)
 #define STM32_FLASH_NPAGES (BOARD_FLASH_SIZE/2)
 #define STM32_FLASH_FIXED_PAGE_SIZE 2
+#elif defined(STM32G4)
+#define STM32_FLASH_NPAGES (BOARD_FLASH_SIZE/2)
+#define STM32_FLASH_FIXED_PAGE_SIZE 2
+#elif defined(STM32L4)
+#define STM32_FLASH_NPAGES (BOARD_FLASH_SIZE/2)
+#define STM32_FLASH_FIXED_PAGE_SIZE 2
 #else
 #error "Unsupported processor for flash.c"
 #endif
@@ -134,6 +144,10 @@ static const uint32_t flash_memmap[STM32_FLASH_NPAGES] = { KB(32), KB(32), KB(32
 #ifdef STORAGE_FLASH_PAGE
 static_assert(STORAGE_FLASH_PAGE < STM32_FLASH_NPAGES,
               "STORAGE_FLASH_PAGE out of range");
+#endif
+#ifdef HAL_CRASH_DUMP_FLASH_PAGE
+static_assert(HAL_CRASH_DUMP_FLASH_PAGE < STM32_FLASH_NPAGES,
+              "HAL_CRASH_DUMP_FLASH_PAGE out of range");
 #endif
 #endif
 
@@ -400,6 +414,17 @@ bool stm32_flash_erasepage(uint32_t page)
     // use 32 bit operations
     FLASH->CR = FLASH_CR_PSIZE_1 | snb | FLASH_CR_SER;
     FLASH->CR |= FLASH_CR_STRT;
+#elif defined(STM32G4)
+    FLASH->CR = FLASH_CR_PER;
+    // rather oddly, PNB is a 7 bit field that the ref manual says can
+    // contain 8 bits we assume that for 512k single bank devices
+    // there is an 8th bit
+    FLASH->CR |= page<<FLASH_CR_PNB_Pos;
+    FLASH->CR |= FLASH_CR_STRT;
+#elif defined(STM32L4)
+    FLASH->CR = FLASH_CR_PER;
+    FLASH->CR |= page<<FLASH_CR_PNB_Pos;
+    FLASH->CR |= FLASH_CR_STRT;
 #else
 #error "Unsupported MCU"
 #endif
@@ -527,7 +552,7 @@ static bool stm32_flash_write_f4f7(uint32_t addr, const void *buf, uint32_t coun
         return false;
     }
 
-    if ((addr+count) >= STM32_FLASH_BASE+STM32_FLASH_SIZE) {
+    if ((addr+count) > STM32_FLASH_BASE+STM32_FLASH_SIZE) {
         return false;
     }
 
@@ -628,7 +653,7 @@ static bool stm32_flash_write_f1(uint32_t addr, const void *buf, uint32_t count)
         return false;
     }
 
-    if ((addr+count) >= STM32_FLASH_BASE+STM32_FLASH_SIZE) {
+    if ((addr+count) > STM32_FLASH_BASE+STM32_FLASH_SIZE) {
         _flash_fail_line = __LINE__;
         return false;
     }
@@ -679,6 +704,83 @@ failed:
 }
 #endif // STM32F1 or STM32F3
 
+#if defined(STM32G4) || defined(STM32L4)
+static bool stm32_flash_write_g4(uint32_t addr, const void *buf, uint32_t count)
+{
+    uint32_t *b = (uint32_t *)buf;
+
+    /* STM32G4 requires double-word access */
+    if ((count & 7) || (addr & 7)) {
+        _flash_fail_line = __LINE__;
+        return false;
+    }
+
+    if ((addr+count) > STM32_FLASH_BASE+STM32_FLASH_SIZE) {
+        _flash_fail_line = __LINE__;
+        return false;
+    }
+
+    // skip already programmed word pairs
+    while (count >= 8 &&
+           getreg32(addr+0) == b[0] &&
+           getreg32(addr+4) == b[1]) {
+        count -= 8;
+        addr += 8;
+        b += 2;
+    }
+    if (count == 0) {
+        return true;
+    }
+
+
+#if STM32_FLASH_DISABLE_ISR
+    syssts_t sts = chSysGetStatusAndLockX();
+#endif
+    
+    stm32_flash_unlock();
+
+    stm32_flash_wait_idle();
+
+    // program in 16 bit steps
+    while (count >= 2) {
+        FLASH->CR = FLASH_CR_PG;
+
+        putreg32(b[0], addr+0);
+        putreg32(b[1], addr+4);
+
+        stm32_flash_wait_idle();
+
+        FLASH->CR = 0;
+
+        if (getreg32(addr+0) != b[0] ||
+            getreg32(addr+4) != b[1]) {
+            _flash_fail_line = __LINE__;
+            _flash_fail_addr = addr;
+            _flash_fail_count = count;
+            _flash_fail_buf = (uint8_t *)b;
+            goto failed;
+        }
+
+        count -= 8;
+        b += 2;
+        addr += 8;
+    }
+
+    stm32_flash_lock();
+#if STM32_FLASH_DISABLE_ISR
+    chSysRestoreStatusX(sts);
+#endif
+    return true;
+
+failed:
+    stm32_flash_lock();
+#if STM32_FLASH_DISABLE_ISR
+    chSysRestoreStatusX(sts);
+#endif
+    return false;
+}
+#endif // STM32G4
+
 bool stm32_flash_write(uint32_t addr, const void *buf, uint32_t count)
 {
 #if defined(STM32F1) || defined(STM32F3)
@@ -687,6 +789,8 @@ bool stm32_flash_write(uint32_t addr, const void *buf, uint32_t count)
     return stm32_flash_write_f4f7(addr, buf, count);
 #elif defined(STM32H7)
     return stm32_flash_write_h7(addr, buf, count);
+#elif defined(STM32G4) || defined(STM32L4)
+    return stm32_flash_write_g4(addr, buf, count);
 #else
 #error "Unsupported MCU"
 #endif

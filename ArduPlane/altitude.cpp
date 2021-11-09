@@ -52,7 +52,9 @@ void Plane::adjust_altitude_target()
         set_target_altitude_location(temp);
     } else 
 #endif // OFFBOARD_GUIDED == ENABLED
-      if (landing.is_flaring()) {
+      if (control_mode->update_target_altitude()) {
+          // handled in mode specific code
+    } else if (landing.is_flaring()) {
         // during a landing flare, use TECS_LAND_SINK as a target sink
         // rate, and ignores the target altitude
         set_target_altitude_location(next_WP_loc);
@@ -135,9 +137,9 @@ void Plane::setup_glide_slope(void)
 }
 
 /*
-  return RTL altitude as AMSL altitude
+  return RTL altitude as AMSL cm
  */
-int32_t Plane::get_RTL_altitude() const
+int32_t Plane::get_RTL_altitude_cm() const
 {
     if (g.RTL_altitude_cm < 0) {
         return current_loc.alt;
@@ -155,12 +157,14 @@ float Plane::relative_ground_altitude(bool use_rangefinder_if_available)
         return rangefinder_state.height_estimate;
    }
 
+#if HAL_QUADPLANE_ENABLED
    if (use_rangefinder_if_available && quadplane.in_vtol_land_final() &&
        rangefinder.status_orient(ROTATION_PITCH_270) == RangeFinder::Status::OutOfRangeLow) {
        // a special case for quadplane landing when rangefinder goes
        // below minimum. Consider our height above ground to be zero
        return 0;
    }
+#endif
 
 #if AP_TERRAIN_AVAILABLE
     float altitude;
@@ -171,6 +175,7 @@ float Plane::relative_ground_altitude(bool use_rangefinder_if_available)
     }
 #endif
 
+#if HAL_QUADPLANE_ENABLED
     if (quadplane.in_vtol_land_descent() &&
         !(quadplane.options & QuadPlane::OPTION_MISSION_LAND_FW_APPROACH)) {
         // when doing a VTOL landing we can use the waypoint height as
@@ -179,6 +184,7 @@ float Plane::relative_ground_altitude(bool use_rangefinder_if_available)
         // height
         return height_above_target();
     }
+#endif
 
     return relative_altitude;
 }
@@ -200,7 +206,7 @@ void Plane::set_target_altitude_current(void)
 #if AP_TERRAIN_AVAILABLE
     // also record the terrain altitude if possible
     float terrain_altitude;
-    if (g.terrain_follow && terrain.height_above_terrain(terrain_altitude, true) && !terrain_disabled()) {
+    if (terrain_enabled_in_current_mode() && terrain.height_above_terrain(terrain_altitude, true) && !terrain_disabled()) {
         target_altitude.terrain_following = true;
         target_altitude.terrain_alt_cm = terrain_altitude*100;
     } else {
@@ -462,8 +468,8 @@ bool Plane::above_location_current(const Location &loc)
 void Plane::setup_terrain_target_alt(Location &loc) const
 {
 #if AP_TERRAIN_AVAILABLE
-    if (g.terrain_follow) {
-        loc.terrain_alt = true;
+    if (terrain_enabled_in_current_mode()) {
+        loc.change_alt_frame(Location::AltFrame::ABOVE_TERRAIN);
     }
 #endif
 }
@@ -618,7 +624,7 @@ void Plane::rangefinder_terrain_correction(float &height)
 #if AP_TERRAIN_AVAILABLE
     if (!g.rangefinder_landing ||
         flight_stage != AP_Vehicle::FixedWing::FLIGHT_LAND ||
-        g.terrain_follow == 0) {
+        !terrain_enabled_in_current_mode()) {
         return;
     }
     float terrain_amsl1, terrain_amsl2;
@@ -637,7 +643,7 @@ void Plane::rangefinder_terrain_correction(float &height)
  */
 void Plane::rangefinder_height_update(void)
 {
-    float distance = rangefinder.distance_cm_orient(ROTATION_PITCH_270)*0.01f;
+    float distance = rangefinder.distance_orient(ROTATION_PITCH_270);
     
     if ((rangefinder.status_orient(ROTATION_PITCH_270) == RangeFinder::Status::Good) && ahrs.home_is_set()) {
         if (!rangefinder_state.have_initial_reading) {
@@ -666,11 +672,19 @@ void Plane::rangefinder_height_update(void)
             }
         } else {
             rangefinder_state.in_range = true;
+            bool flightstage_good_for_rangefinder_landing = false;
+            if (flight_stage == AP_Vehicle::FixedWing::FLIGHT_LAND) {
+                flightstage_good_for_rangefinder_landing = true;
+            }
+#if HAL_QUADPLANE_ENABLED
+            if (control_mode == &mode_qland ||
+                control_mode == &mode_qrtl ||
+                (control_mode == &mode_auto && quadplane.is_vtol_land(plane.mission.get_current_nav_cmd().id))) {
+                flightstage_good_for_rangefinder_landing = true;
+            }
+#endif
             if (!rangefinder_state.in_use &&
-                (flight_stage == AP_Vehicle::FixedWing::FLIGHT_LAND ||
-                 control_mode == &mode_qland ||
-                 control_mode == &mode_qrtl ||
-                 (control_mode == &mode_auto && quadplane.is_vtol_land(plane.mission.get_current_nav_cmd().id))) &&
+                flightstage_good_for_rangefinder_landing &&
                 g.rangefinder_landing) {
                 rangefinder_state.in_use = true;
                 gcs().send_text(MAV_SEVERITY_INFO, "Rangefinder engaged at %.2fm", (double)rangefinder_state.height_estimate);
@@ -685,12 +699,12 @@ void Plane::rangefinder_height_update(void)
     if (rangefinder_state.in_range) {
         // base correction is the difference between baro altitude and
         // rangefinder estimate
-        float correction = relative_altitude - rangefinder_state.height_estimate;
+        float correction = adjusted_relative_altitude_cm()*0.01 - rangefinder_state.height_estimate;
 
 #if AP_TERRAIN_AVAILABLE
         // if we are terrain following then correction is based on terrain data
         float terrain_altitude;
-        if ((target_altitude.terrain_following || g.terrain_follow) && 
+        if ((target_altitude.terrain_following || terrain_enabled_in_current_mode()) && 
             terrain.height_above_terrain(terrain_altitude, true)) {
             correction = terrain_altitude - rangefinder_state.height_estimate;
         }
@@ -730,3 +744,48 @@ bool Plane::terrain_disabled()
 }
 
 
+/*
+  Check if terrain following is enabled for the current mode
+ */
+#if AP_TERRAIN_AVAILABLE
+const Plane::TerrainLookupTable Plane::Terrain_lookup[] = {
+    {Mode::Number::FLY_BY_WIRE_B, terrain_bitmask::FLY_BY_WIRE_B},
+    {Mode::Number::CRUISE, terrain_bitmask::CRUISE},
+    {Mode::Number::AUTO, terrain_bitmask::AUTO},
+    {Mode::Number::RTL, terrain_bitmask::RTL},
+    {Mode::Number::AVOID_ADSB, terrain_bitmask::AVOID_ADSB},
+    {Mode::Number::GUIDED, terrain_bitmask::GUIDED},
+    {Mode::Number::LOITER, terrain_bitmask::LOITER},
+    {Mode::Number::CIRCLE, terrain_bitmask::CIRCLE},
+#if HAL_QUADPLANE_ENABLED
+    {Mode::Number::QRTL, terrain_bitmask::QRTL},
+    {Mode::Number::QLAND, terrain_bitmask::QLAND},
+    {Mode::Number::QLOITER, terrain_bitmask::QLOITER},
+#endif
+};
+
+bool Plane::terrain_enabled_in_current_mode() const
+{
+    return terrain_enabled_in_mode(control_mode->mode_number());
+}
+
+bool Plane::terrain_enabled_in_mode(Mode::Number num) const
+{
+    // Global enable
+    if ((g.terrain_follow.get() & int32_t(terrain_bitmask::ALL)) != 0) {
+        return true;
+    }
+
+    // Specific enable
+    for (const struct TerrainLookupTable entry : Terrain_lookup) {
+        if (entry.mode_num == num) {
+            if ((g.terrain_follow.get() & int32_t(entry.bitmask)) != 0) {
+                return true;
+            }
+            break;
+        }
+    }
+
+    return false;
+}
+#endif

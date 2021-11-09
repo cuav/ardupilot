@@ -38,11 +38,16 @@ static const SysFileList sysfs_file_list[] = {
     {"uarts.txt"},
 #if HAL_MAX_CAN_PROTOCOL_DRIVERS
     {"can_log.txt"},
+#endif
+#if HAL_NUM_CAN_IFACES > 0
     {"can0_stats.txt"},
     {"can1_stats.txt"},
 #endif
 #if !defined(HAL_BOOTLOADER_BUILD) && (defined(STM32F7) || defined(STM32H7))
     {"persistent.parm"},
+#endif
+#if defined(HAL_CRASH_DUMP_FLASHPAGE)
+    {"crash_dump.bin"},
 #endif
 };
 
@@ -90,9 +95,11 @@ int AP_Filesystem_Sys::open(const char *fname, int flags)
     if (strcmp(fname, "threads.txt") == 0) {
         hal.util->thread_info(*r.str);
     }
+#if HAL_SCHEDULER_ENABLED
     if (strcmp(fname, "tasks.txt") == 0) {
         AP::scheduler().task_info(*r.str);
     }
+#endif
     if (strcmp(fname, "dma.txt") == 0) {
         hal.util->dma_info(*r.str);
     }
@@ -102,11 +109,14 @@ int AP_Filesystem_Sys::open(const char *fname, int flags)
     if (strcmp(fname, "uarts.txt") == 0) {
         hal.util->uart_info(*r.str);
     }
-#if HAL_MAX_CAN_PROTOCOL_DRIVERS
-    int8_t can_stats_num = -1;
+#if HAL_CANMANAGER_ENABLED
     if (strcmp(fname, "can_log.txt") == 0) {
         AP::can().log_retrieve(*r.str);
-    } else if (strcmp(fname, "can0_stats.txt") == 0) {
+    }
+#endif
+#if HAL_NUM_CAN_IFACES > 0
+    int8_t can_stats_num = -1;
+    if (strcmp(fname, "can0_stats.txt") == 0) {
         can_stats_num = 0;
     } else if (strcmp(fname, "can1_stats.txt") == 0) {
         can_stats_num = 1;
@@ -120,6 +130,11 @@ int AP_Filesystem_Sys::open(const char *fname, int flags)
     if (strcmp(fname, "persistent.parm") == 0) {
         hal.util->load_persistent_params(*r.str);
     }
+#if defined(HAL_CRASH_DUMP_FLASHPAGE)
+    if (strcmp(fname, "crash_dump.bin") == 0) {
+        hal.util->last_crash_dump(*r.str);
+    }
+#endif
     if (r.str->get_length() == 0) {
         errno = r.str->has_failed_allocation()?ENOMEM:ENOENT;
         delete r.str;

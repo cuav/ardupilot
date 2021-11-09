@@ -149,9 +149,6 @@ SoaringController::SoaringController(AP_SpdHgtControl &spdHgt, const AP_Vehicle:
     _throttle_suppressed(true)
 {
     AP_Param::setup_object_defaults(this, var_info);
-
-    _position_x_filter = LowPassFilter<float>(1.0/60.0);
-    _position_y_filter = LowPassFilter<float>(1.0/60.0);
 }
 
 void SoaringController::get_target(Location &wp)
@@ -175,9 +172,10 @@ bool SoaringController::suppress_throttle()
         _spdHgt.reset_pitch_I();
 
         _cruise_start_time_us = AP_HAL::micros64();
+
         // Reset the filtered vario rate - it is currently elevated due to the climb rate and would otherwise take a while to fall again,
         // leading to false positives.
-        _vario.filtered_reading = 0;
+        _vario.reset_trigger_filter(0.0f);
     }
 
     return _throttle_suppressed;
@@ -185,11 +183,9 @@ bool SoaringController::suppress_throttle()
 
 bool SoaringController::check_thermal_criteria()
 {
-    ActiveStatus status = active_state();
-
-    return (status == ActiveStatus::AUTO_MODE_CHANGE
+    return (_last_update_status == ActiveStatus::AUTO_MODE_CHANGE
             && ((AP_HAL::micros64() - _cruise_start_time_us) > ((unsigned)min_cruise_s * 1e6))
-            && (_vario.filtered_reading - _vario.get_exp_thermalling_sink()) > thermal_vspeed
+            && (_vario.get_trigger_value() - _vario.get_exp_thermalling_sink()) > thermal_vspeed
             && _vario.alt < alt_max
             && _vario.alt > alt_min);
 }
@@ -197,10 +193,11 @@ bool SoaringController::check_thermal_criteria()
 
 SoaringController::LoiterStatus SoaringController::check_cruise_criteria(Vector2f prev_wp, Vector2f next_wp)
 {
-    ActiveStatus status = active_state();
+    // Check conditions for re-entering cruise. Note that the aircraft needs to also be aligned with the appropriate
+    // heading before some of these conditions will actually trigger.
+    // The GCS messages are emitted in mode_thermal.cpp. Update these if the logic here is changed.
 
-    if (status == ActiveStatus::SOARING_DISABLED) {
-        _cruise_criteria_msg_last = LoiterStatus::DISABLED;
+    if (_last_update_status == ActiveStatus::SOARING_DISABLED) {
         return LoiterStatus::DISABLED;
     }
 
@@ -211,35 +208,19 @@ SoaringController::LoiterStatus SoaringController::check_cruise_criteria(Vector2
         result = LoiterStatus::EXIT_COMMANDED;
     } else if (alt > alt_max) {
         result = LoiterStatus::ALT_TOO_HIGH;
-        if (result != _cruise_criteria_msg_last) {
-            gcs().send_text(MAV_SEVERITY_ALERT, "Reached upper alt = %dm", (int16_t)alt);
-        }
     } else if (alt < alt_min) {
         result = LoiterStatus::ALT_TOO_LOW;
-        if (result != _cruise_criteria_msg_last) {
-            gcs().send_text(MAV_SEVERITY_ALERT, "Reached lower alt = %dm", (int16_t)alt);
-        }
     } else if ((AP_HAL::micros64() - _thermal_start_time_us) > ((unsigned)min_thermal_s * 1e6)) {
         const float mcCreadyAlt = McCready(alt);
         if (_thermalability < mcCreadyAlt) {
             result = LoiterStatus::THERMAL_WEAK;
-            if (result != _cruise_criteria_msg_last) {
-                gcs().send_text(MAV_SEVERITY_INFO, "Thermal weak: th %3.1fm/s alt %3.1fm Mc %3.1fm/s", (double)_thermalability, (double)alt, (double)mcCreadyAlt);
-            }
-        } else if (alt < (-_thermal_start_pos.z) || _vario.smoothed_climb_rate < 0.0) {
+        } else if (alt < (-_thermal_start_pos.z) || _vario.get_filtered_climb() < 0.0) {
             result = LoiterStatus::ALT_LOST;
-            if (result != _cruise_criteria_msg_last) {
-                gcs().send_text(MAV_SEVERITY_INFO, "Not climbing");
-            }
         } else if (check_drift(prev_wp, next_wp)) {
             result = LoiterStatus::DRIFT_EXCEEDED;
-            if (result != _cruise_criteria_msg_last) {
-                gcs().send_text(MAV_SEVERITY_INFO, "Drifted too far");
-            }
         }
     }
 
-    _cruise_criteria_msg_last = result;
     return result;
 }
 
@@ -272,7 +253,7 @@ void SoaringController::init_thermalling()
     }
 
     // New state vector filter will be reset. Thermal location is placed in front of a/c
-    const float init_xr[4] = {INITIAL_THERMAL_STRENGTH,
+    const float init_xr[4] = {_vario.get_trigger_value(),
                               INITIAL_THERMAL_RADIUS,
                               position.x + thermal_distance_ahead * cosf(_ahrs.yaw),
                               position.y + thermal_distance_ahead * sinf(_ahrs.yaw)};
@@ -286,7 +267,7 @@ void SoaringController::init_thermalling()
     _thermal_start_time_us = AP_HAL::micros64();
     _thermal_start_pos = position;
 
-    _vario.reset_filter(0.0);
+    _vario.reset_climb_filter(0.0);
 
     _position_x_filter.reset(_ekf.X[2]);
     _position_y_filter.reset(_ekf.X[3]);
@@ -296,7 +277,7 @@ void SoaringController::init_thermalling()
 
 void SoaringController::init_cruising()
 {
-    if (active_state()>=ActiveStatus::MANUAL_MODE_CHANGE) {
+    if (_last_update_status >= ActiveStatus::MANUAL_MODE_CHANGE) {
         _cruise_start_time_us = AP_HAL::micros64();
         // Start glide. Will be updated on the next loop.
         set_throttle_suppressed(true);
@@ -314,7 +295,7 @@ void SoaringController::update_thermalling()
         return;
     }
 
-    Vector3f wind_drift = _ahrs.wind_estimate()*deltaT*_vario.smoothed_climb_rate/_ekf.X[0];
+    Vector3f wind_drift = _ahrs.wind_estimate()*deltaT*_vario.get_filtered_climb()/_ekf.X[0];
 
     // update the filter
     _ekf.update(_vario.reading, current_position.x, current_position.y, wind_drift.x, wind_drift.y);
@@ -348,7 +329,7 @@ void SoaringController::update_thermalling()
     // @Field: dx_w: Wind speed north
     // @Field: dy_w: Wind speed east
     // @Field: th: Estimate of achievable climbrate in thermal
-    AP::logger().Write("SOAR", "TimeUS,nettorate,x0,x1,x2,x3,north,east,alt,dx_w,dy_w,th", "Qfffffffffff",
+    AP::logger().WriteStreaming("SOAR", "TimeUS,nettorate,x0,x1,x2,x3,north,east,alt,dx_w,dy_w,th", "Qfffffffffff",
                                            AP_HAL::micros64(),
                                            (double)_vario.reading,
                                            (double)_ekf.X[0],
@@ -371,7 +352,7 @@ void SoaringController::update_cruising()
 
 void SoaringController::update_vario()
 {
-    _vario.update(polar_K, polar_CD0, polar_B);
+    _vario.update(thermal_bank, polar_K, polar_CD0, polar_B);
 }
 
 
@@ -381,18 +362,18 @@ float SoaringController::McCready(float alt)
     return thermal_vspeed;
 }
 
-SoaringController::ActiveStatus SoaringController::active_state() const
+SoaringController::ActiveStatus SoaringController::active_state(bool override_disable) const
 {
-    if (!soar_active) {
+    if (override_disable || !soar_active) {
         return ActiveStatus::SOARING_DISABLED;
     }
 
     return _pilot_desired_state;
 }
 
-void SoaringController::update_active_state()
+void SoaringController::update_active_state(bool override_disable)
 {
-    ActiveStatus status = active_state();
+    ActiveStatus status = active_state(override_disable);
     bool state_changed = !(status == _last_update_status);
 
     if (state_changed) {
@@ -405,20 +386,19 @@ void SoaringController::update_active_state()
             case ActiveStatus::MANUAL_MODE_CHANGE:
                 // It's enabled, but wasn't on the last loop.
                 gcs().send_text(MAV_SEVERITY_INFO, "Soaring: Enabled, manual mode changes.");
-                set_throttle_suppressed(true);
-
-                // We changed mode - if we're in LOITER this means we should exit gracefully.
-                // This has no effect if we're cruising as it is reset on thermal entry.
-                _exit_commanded = true;
                 break;
             case ActiveStatus::AUTO_MODE_CHANGE:
                 gcs().send_text(MAV_SEVERITY_INFO, "Soaring: Enabled, automatic mode changes.");
-                set_throttle_suppressed(true);
-
-                // We changed mode - if we're in LOITER this means we should exit gracefully.
-                // This has no effect if we're cruising as it is reset on thermal entry.
-                _exit_commanded = true;
                 break;
+        }
+
+        if (_last_update_status == ActiveStatus::SOARING_DISABLED) {
+            // We have switched from disabled into an active mode, start cruising.
+            init_cruising();
+        } else if (status != ActiveStatus::SOARING_DISABLED) {
+            // We switched between active modes. If we're in THERMAL this means we should exit gracefully.
+            // This has no effect if we're cruising as it is reset on thermal entry.
+            _exit_commanded = true;
         }
     }
 

@@ -142,7 +142,7 @@ void Scheduler::delay_microseconds(uint16_t usec)
         // calling with ticks == 0 causes a hard fault on ChibiOS
         ticks = 1;
     }
-    chThdSleep(ticks); //Suspends Thread for desired microseconds
+    chThdSleep(MAX(ticks,CH_CFG_ST_TIMEDELTA)); //Suspends Thread for desired microseconds
 }
 
 /*
@@ -264,7 +264,7 @@ void Scheduler::reboot(bool hold_in_bootloader)
     }
 #endif
 
-#ifndef HAL_NO_LOGGING
+#if HAL_LOGGING_ENABLED
     //stop logging
     if (AP_Logger::get_singleton()) {
         AP::logger().StopLogging();
@@ -387,7 +387,7 @@ void Scheduler::_monitor_thread(void *arg)
         sched->delay(100);
     }
     bool using_watchdog = AP_BoardConfig::watchdog_enabled();
-#ifndef HAL_NO_LOGGING
+#if HAL_LOGGING_ENABLED
     uint8_t log_wd_counter = 0;
 #endif
 
@@ -405,7 +405,7 @@ void Scheduler::_monitor_thread(void *arg)
         if (loop_delay >= 200) {
             // the main loop has been stuck for at least
             // 200ms. Starting logging the main loop state
-#ifndef HAL_NO_LOGGING
+#if HAL_LOGGING_ENABLED
             const AP_HAL::Util::PersistentData &pd = hal.util->persistent_data;
             if (AP_Logger::get_singleton()) {
                 AP::logger().Write("MON", "TimeUS,LDelay,Task,IErr,IErrCnt,IErrLn,MavMsg,MavCmd,SemLine,SPICnt,I2CCnt", "QIbIHHHHHII",
@@ -428,7 +428,7 @@ void Scheduler::_monitor_thread(void *arg)
             INTERNAL_ERROR(AP_InternalError::error_t::main_loop_stuck);
         }
 
-#ifndef HAL_NO_LOGGING
+#if HAL_LOGGING_ENABLED
     if (log_wd_counter++ == 10 && hal.util->was_watchdog_reset()) {
         log_wd_counter = 0;
         // log watchdog message once a second
@@ -450,7 +450,7 @@ void Scheduler::_monitor_thread(void *arg)
                                    pd.fault_lr,
                                    pd.thread_name4);
     }
-#endif // HAL_NO_LOGGING
+#endif // HAL_LOGGING_ENABLED
 
 #ifndef IOMCU_FW
     // setup GPIO interrupt quotas
@@ -501,7 +501,7 @@ void Scheduler::_io_thread(void* arg)
     while (!sched->_hal_initialized) {
         sched->delay_microseconds(1000);
     }
-#ifndef HAL_NO_LOGGING
+#if HAL_LOGGING_ENABLED
     uint32_t last_sd_start_ms = AP_HAL::millis();
 #endif
 #if CH_DBG_ENABLE_STACK_CHECK == TRUE
@@ -513,11 +513,11 @@ void Scheduler::_io_thread(void* arg)
         // run registered IO processes
         sched->_run_io();
 
-#if !defined(HAL_NO_LOGGING) || CH_DBG_ENABLE_STACK_CHECK == TRUE
+#if HAL_LOGGING_ENABLED || CH_DBG_ENABLE_STACK_CHECK == TRUE
         uint32_t now = AP_HAL::millis();
 #endif
 
-#ifndef HAL_NO_LOGGING
+#if HAL_LOGGING_ENABLED
         if (!hal.util->get_soft_armed()) {
             // if sdcard hasn't mounted then retry it every 3s in the IO
             // thread when disarmed
@@ -572,16 +572,16 @@ void Scheduler::_storage_thread(void* arg)
         sched->delay_microseconds(10000);
     }
 #if defined STM32H7
-    uint8_t memcheck_counter=0;
+    uint16_t memcheck_counter=0;
 #endif
     while (true) {
-        sched->delay_microseconds(10000);
+        sched->delay_microseconds(1000);
 
         // process any pending storage writes
         hal.storage->_timer_tick();
 
 #if defined STM32H7
-        if (memcheck_counter++ % 50 == 0) {
+        if (memcheck_counter++ % 500 == 0) {
             // run check at 2Hz
             sched->check_low_memory_is_zero();
         }
@@ -626,18 +626,9 @@ void Scheduler::thread_create_trampoline(void *ctx)
     free(t);
 }
 
-/*
-  create a new thread
-*/
-bool Scheduler::thread_create(AP_HAL::MemberProc proc, const char *name, uint32_t stack_size, priority_base base, int8_t priority)
+// calculates an integer to be used as the priority for a newly-created thread
+uint8_t Scheduler::calculate_thread_priority(priority_base base, int8_t priority) const
 {
-    // take a copy of the MemberProc, it is freed after thread exits
-    AP_HAL::MemberProc *tproc = (AP_HAL::MemberProc *)malloc(sizeof(proc));
-    if (!tproc) {
-        return false;
-    }
-    *tproc = proc;
-
     uint8_t thread_priority = APM_IO_PRIORITY;
     static const struct {
         priority_base base;
@@ -662,6 +653,23 @@ bool Scheduler::thread_create(AP_HAL::MemberProc proc, const char *name, uint32_
             break;
         }
     }
+    return thread_priority;
+}
+
+/*
+  create a new thread
+*/
+bool Scheduler::thread_create(AP_HAL::MemberProc proc, const char *name, uint32_t stack_size, priority_base base, int8_t priority)
+{
+    // take a copy of the MemberProc, it is freed after thread exits
+    AP_HAL::MemberProc *tproc = (AP_HAL::MemberProc *)malloc(sizeof(proc));
+    if (!tproc) {
+        return false;
+    }
+    *tproc = proc;
+
+    const uint8_t thread_priority = calculate_thread_priority(base, priority);
+
     thread_t *thread_ctx = thread_create_alloc(THD_WORKING_AREA_SIZE(stack_size),
                                                name,
                                                thread_priority,
@@ -762,7 +770,7 @@ void Scheduler::check_stack_free(void)
         if (stack_free(tp->wabase) < min_stack) {
             // use task priority for line number. This allows us to
             // identify the task fairly reliably
-            AP::internalerror().error(AP_InternalError::error_t::stack_overflow, tp->prio);
+            AP::internalerror().error(AP_InternalError::error_t::stack_overflow, tp->realprio);
         }
     }
 }
