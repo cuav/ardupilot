@@ -83,7 +83,7 @@ const AP_Param::GroupInfo AP_Vehicle::var_info[] = {
 #if AP_HYGROMETER_ENABLED
     // @Group: HYGRO
     // @Path: ../libraries/AP_Hygrometer/AP_Hygrometer.cpp
-    AP_SUBGROUPINFO(hygrometer, "HYGRO", 10, AP_Vehicle, AP_Hygrometer),
+    AP_SUBGROUPINFO(hygrometer, "HYGRO", 12, AP_Vehicle, AP_Hygrometer),
 #endif
 
     AP_GROUPEND
