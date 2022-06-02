@@ -49,6 +49,8 @@
 #include <AP_RCTelemetry/AP_CRSF_Telem.h>
 #include <AP_AIS/AP_AIS.h>
 #include <AP_Filesystem/AP_Filesystem.h>
+#include <AP_Hygrometer/AP_Hygrometer.h>
+#include <AP_Hygrometer/AP_Hygrometer_Backend.h>
 
 #include <stdio.h>
 
@@ -903,6 +905,7 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_HIGH_LATENCY2,         MSG_HIGH_LATENCY2},
         { MAVLINK_MSG_ID_AIS_VESSEL,            MSG_AIS_VESSEL},
         { MAVLINK_MSG_ID_UAVIONIX_ADSB_OUT_STATUS, MSG_UAVIONIX_ADSB_OUT_STATUS},
+        { MAVLINK_MSG_ID_HYGROMETER_SENSOR,     MSG_HYGROMETER_STATUS},
             };
 
     for (uint8_t i=0; i<ARRAY_SIZE(map); i++) {
@@ -2780,6 +2783,32 @@ void GCS_MAVLINK::send_vfr_hud()
         vfr_hud_alt(),
         vfr_hud_climbrate());
 }
+
+#if AP_HYGROMETER_ENABLED
+void GCS_MAVLINK::send_hygrometer()
+{
+    AP_Hygrometer *hygrometer {AP::hygrometer()};
+    if (hygrometer == nullptr) {
+        return;
+    }
+
+    for (uint8_t i = 0; i < AP_HYGROMETER_MAX_SENSORS; i++) {
+        if (!HAVE_PAYLOAD_SPACE(chan, DISTANCE_SENSOR)) {
+            return;
+        }
+        AP_Hygrometer_Backend *sensor = hygrometer->get_backend(i);
+        if (sensor == nullptr) {
+            continue;
+        }
+
+    mavlink_msg_hygrometer_sensor_send(
+        chan,
+        i,                                            // hygrometer instance, use 0 for first sensor
+        100*hygrometer->get_temperature(i),           // temperature the sensor measure, unit: Centi Degree(cdegC)
+        100*hygrometer->get_humidity(i));             // humidity the sensor measure, unit: Centi Percent(c%)
+    }
+}
+#endif // AP_HYGROMETER_ENABLED
 
 /*
   handle a MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN command 
@@ -5458,6 +5487,12 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
     case MSG_UAVIONIX_ADSB_OUT_STATUS:
         CHECK_PAYLOAD_SIZE(UAVIONIX_ADSB_OUT_STATUS);
         send_uavionix_adsb_out_status();
+        break;
+
+    case MSG_HYGROMETER_STATUS:
+#if AP_HYGROMETER_ENABLED
+        send_hygrometer();
+#endif // HAL_HYGROMETER_ENABLED
         break;
 
     default:

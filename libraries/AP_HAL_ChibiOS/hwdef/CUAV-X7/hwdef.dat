@@ -315,3 +315,5 @@ DMA_NOSHARE  SPI1* TIM*UP*
 
 # default to 45C target temp
 define HAL_IMU_TEMP_DEFAULT 45
+
+ROMFS message-intervals-chan1.txt libraries/AP_HAL_ChibiOS/hwdef/CUAV-X7/message-intervals-chan1.txt
