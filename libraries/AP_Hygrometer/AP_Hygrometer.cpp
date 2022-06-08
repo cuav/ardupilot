@@ -162,8 +162,6 @@ float AP_Hygrometer::get_temperature(uint8_t instance)
         return false;
     }
 
-    printf("hygrometer:temperature = %f\n",state[instance].temperature);
-
     return state[instance].temperature;
 }
 

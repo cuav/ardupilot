@@ -3,6 +3,7 @@
 
 local GPS_disabled = false
 local have_had_good_lock = false
+local gps_disabled_time = 0
 
 function bind_param(name)
    local p = Parameter()
@@ -12,6 +13,7 @@ end
 
 MAX_VEL_VARIANCE = bind_param("SCR_USER1")
 MIN_SATELLITES = bind_param("SCR_USER2")
+DISABLE_TIMEOUT = bind_param("SCR_USER3")
 AHRS_GPS_USE = bind_param("AHRS_GPS_USE")
 
 -- set reasonable defaults
@@ -21,6 +23,10 @@ end
 
 if MIN_SATELLITES:get() <= 12 then
    MIN_SATELLITES:set(12)
+end
+
+if DISABLE_TIMEOUT:get() <= 3600 then
+   DISABLE_TIMEOUT:set(3600)
 end
 
 -- the main update function
@@ -52,6 +58,7 @@ function check_ekf()
    if not ekf_ok then
       if not GPS_disabled then
          GPS_disabled = true
+         gps_disabled_time = millis():tofloat()
          gcs:send_text(0, "Disabling EKF use of GPS")
          -- switch to EKF3 2nd source set, which should be setup without GPS
          ahrs:set_posvelyaw_source_set(1)
@@ -67,6 +74,16 @@ function check_ekf()
          -- also enable use of GPS by DCM
          AHRS_GPS_USE:set(1)
       end
+   end
+
+   -- After GPS disable time reaches DISABLE_TIMEOUT, enable GPS if the number of satellites reaches MIN_SATELLITES
+   if GPS_disabled and (num_sats >= MIN_SATELLITES:get()) and (millis():tofloat() - gps_disabled_time >=  DISABLE_TIMEOUT * 1000) then
+      GPS_disabled = false
+      gcs:send_text(0, "Enabling EKF use of GPS")
+      -- switch to EKF3 1st source set, which should be setup with GPS
+      ahrs:set_posvelyaw_source_set(0)
+      -- also enable use of GPS by DCM
+      AHRS_GPS_USE:set(1)
    end
 
 end
