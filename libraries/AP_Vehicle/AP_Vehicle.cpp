@@ -73,6 +73,12 @@ const AP_Param::GroupInfo AP_Vehicle::var_info[] = {
     AP_SUBGROUPINFO(airspeed, "ARSPD", 10, AP_Vehicle, AP_Airspeed),
 #endif
 
+#if AP_HYGROMETER_ENABLED
+    // @Group: HYGRO
+    // @Path: ../libraries/AP_Hygrometer/AP_Hygrometer.cpp
+    AP_SUBGROUPINFO(hygrometer, "HYGRO", 12, AP_Vehicle, AP_Hygrometer),
+#endif
+
     AP_GROUPEND
 };
 
@@ -204,6 +210,10 @@ void AP_Vehicle::setup()
     efi.init();
 #endif
 
+#if AP_HYGROMETER_ENABLED
+    hygrometer.init();
+#endif
+
     gcs().send_text(MAV_SEVERITY_INFO, "ArduPilot Ready");
 }
 
@@ -299,6 +309,9 @@ const AP_Scheduler::Task AP_Vehicle::scheduler_tasks[] = {
     SCHED_TASK(accel_cal_update,      10,    100, 245),
 #if HAL_EFI_ENABLED
     SCHED_TASK_CLASS(AP_EFI,       &vehicle.efi,            update,                   10, 200, 250),
+#endif
+#if AP_HYGROMETER_ENABLED
+    SCHED_TASK_CLASS(AP_Hygrometer, &vehicle.hygrometer,      update,                  3,  100, 251),
 #endif
 };
 

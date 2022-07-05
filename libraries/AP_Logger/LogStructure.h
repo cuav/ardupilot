@@ -134,6 +134,7 @@ const struct MultiplierStructure log_Multipliers[] = {
 #include <AC_Avoidance/LogStructure.h>
 #include <AP_ESC_Telem/LogStructure.h>
 #include <AP_AIS/LogStructure.h>
+#include <AP_Hygrometer/LogStructure.h>
 
 // structure used to define logging format
 struct PACKED LogStructure {
@@ -1394,7 +1395,8 @@ LOG_STRUCTURE_FROM_AIS, \
     { LOG_VER_MSG, sizeof(log_VER), \
       "VER",   "QBHBBBBIZH", "TimeUS,BT,BST,Maj,Min,Pat,FWT,GH,FWS,APJ", "s---------", "F---------", false }, \
     { LOG_MOTBATT_MSG, sizeof(log_MotBatt), \
-      "MOTB", "QffffB",  "TimeUS,LiftMax,BatVolt,ThLimit,ThrAvMx,FailFlags", "s-----", "F-----" , true }
+      "MOTB", "QffffB",  "TimeUS,LiftMax,BatVolt,ThLimit,ThrAvMx,FailFlags", "s-----", "F-----" , true }, \
+LOG_STRUCTURE_FROM_HYGROMETER
 
 // message types 0 to 63 reserved for vehicle specific use
 
@@ -1477,6 +1479,7 @@ enum LogMessages : uint8_t {
     LOG_VIDEO_STABILISATION_MSG,
     LOG_MOTBATT_MSG,
     LOG_VER_MSG,
+    LOG_IDS_FROM_HYGROMETER,
 
     _LOG_LAST_MSG_
 };

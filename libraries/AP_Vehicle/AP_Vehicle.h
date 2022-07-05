@@ -47,6 +47,7 @@
 #include <AP_Frsky_Telem/AP_Frsky_Parameters.h>
 #include <AP_ExternalAHRS/AP_ExternalAHRS.h>
 #include <AP_VideoTX/AP_SmartAudio.h>
+#include <AP_Hygrometer/AP_Hygrometer.h>
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
 #include <SITL/SITL.h>
 #endif
@@ -377,6 +378,10 @@ protected:
 
 #if AP_AIRSPEED_ENABLED
     AP_Airspeed airspeed;
+#endif
+
+#if AP_HYGROMETER_ENABLED
+    AP_Hygrometer hygrometer;
 #endif
 
     static const struct AP_Param::GroupInfo var_info[];
