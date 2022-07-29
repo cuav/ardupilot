@@ -26,6 +26,7 @@
 #define REG_PROD_ID  0x72
 #define  PROD_ID_16470     0x4056
 #define  PROD_ID_16477     0x405d
+#define  PROD_ID_16500     0x4074
 #define  PROD_ID_16507     0x407b
 
 #define REG_GLOB_CMD 0x68
@@ -163,6 +164,17 @@ bool AP_InertialSensor_ADIS1647x::check_product_id(uint16_t &prod_id)
         default:
             return false;
         }
+        return true;
+    }
+
+     case PROD_ID_16500: {
+        opmode = OpMode::Delta32;
+        expected_sample_rate_hz = 1200;
+        accel_scale = 392.0 / 2097152000.0;
+        dvel_scale = 400.0 / 0x7FFFFFFF;
+        _clip_limit = 39.5f * GRAVITY_MSS;
+        gyro_scale = radians(2000) / 0x4E200000;
+        dangle_scale = radians(2160.0 / 0x7FFFFFFF);
         return true;
     }
         
